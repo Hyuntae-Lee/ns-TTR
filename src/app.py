@@ -52,8 +52,12 @@ def preset_defaults(idx: int) -> dict:
 
 
 def on_preset_change():
+    """A preset change re-fills the void geometry and pulse-energy defaults for the new depth."""
     for key, val in preset_defaults(st.session_state.preset_idx).items():
         st.session_state[key] = val
+
+
+KVOID_CUSTOM = len(KVOID_PRESETS)   # index of the "직접 입력" option in the k_void selectbox
 
 
 def init_state():
@@ -70,16 +74,17 @@ def init_state():
 def build_config() -> SimConfig:
     s = st.session_state
     p = DEPTH_PRESETS[s.preset_idx]
-    kv = KVOID_PRESETS[s.kvoid_idx]
+    k_void = s.kvoid_custom if s.kvoid_idx == KVOID_CUSTOM else KVOID_PRESETS[s.kvoid_idx].k
     void = VoidSpec(
         enabled=s.void_enabled, depth=s.void_depth_um * UM, thickness=s.void_thickness_um * UM,
-        r_center=s.void_rc_um * UM, r_half=s.void_r_um * UM, k=kv.k, rho_cp=AIR.rho_cp,
+        r_center=s.void_rc_um * UM, r_half=s.void_r_um * UM, k=k_void, rho_cp=AIR.rho_cp,
     )
     laser = Laser(
         tau_p=p.tau_p, profile=s.profile, energy=s.energy_nJ * 1e-9, w=s.spot_um * UM,
         reflectivity=s.reflectivity, probe_w=s.probe_um * UM,
     )
-    numerics = Numerics(dz=p.dz, fo=s.fo, t_end_factor=s.t_end_factor, stretch=s.stretch)
+    numerics = Numerics(dz=p.dz, fo=s.fo, t_end_factor=s.t_end_factor, stretch=s.stretch,
+                        n_snapshots=int(s.get("n_snapshots", 12)))
     geometry = Geometry(homogeneous_copper=s.homogeneous)
     return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics)
 
@@ -128,40 +133,60 @@ with st.sidebar:
 
     st.header("2. k_void (void 열전도율)")
     st.selectbox(
-        "수치적 floor 값 — 민감도를 꼭 확인하세요", options=list(range(len(KVOID_PRESETS))),
-        format_func=lambda i: KVOID_PRESETS[i].label, key="kvoid_idx",
+        "수치적 floor 값 — 민감도를 꼭 확인하세요", options=list(range(len(KVOID_PRESETS) + 1)),
+        format_func=lambda i: "직접 입력 (숫자)" if i == KVOID_CUSTOM else KVOID_PRESETS[i].label, key="kvoid_idx",
     )
-    kv = KVOID_PRESETS[st.session_state.kvoid_idx]
-    st.caption(kv.description)
-    if kv.warning:
-        st.warning(kv.warning)
+    if st.session_state.kvoid_idx != KVOID_CUSTOM:
+        st.session_state.setdefault("kvoid_custom", 1.0)
+        kv = KVOID_PRESETS[st.session_state.kvoid_idx]
+        st.caption(kv.description)
+        if kv.warning:
+            st.warning(kv.warning)
 
-    st.header("3. Void 형상")
-    st.checkbox("void 포함", value=True, key="void_enabled")
-    c1, c2 = st.columns(2)
-    c1.number_input("깊이 (윗면 z) [μm]", min_value=0.0, max_value=500.0, step=0.1, key="void_depth_um", format="%.3f")
-    c2.number_input("두께 [μm]", min_value=0.01, max_value=500.0, step=0.1, key="void_thickness_um", format="%.3f")
-    c1.number_input("반경 위치 (0 = 축상) [μm]", min_value=0.0, max_value=40.0, step=0.5, key="void_rc_um", value=0.0, format="%.2f",
-                    help="0이면 축상의 원판형 void, 0보다 크면 축대칭 링(고리)형 void로 근사합니다.")
-    c2.number_input("반경 반폭 [μm]", min_value=0.01, max_value=40.0, step=0.5, key="void_r_um", format="%.3f")
+    # All numeric inputs live in a form: typed values are collected when the 적용 button is
+    # clicked (or Enter is pressed inside a field), so they never depend on a keypress being
+    # delivered to the widget (an IME can swallow Enter) and never trigger intermediate reruns.
+    with st.form("settings", border=False):
+        if st.session_state.kvoid_idx == KVOID_CUSTOM:
+            st.number_input("k_void [W/m·K] (직접 입력)", min_value=1e-4, max_value=400.0, step=0.1, key="kvoid_custom", format="%.4g",
+                            help="임의의 값을 직접 입력합니다. 실제 공기값은 0.026 W/m·K 입니다.")
 
-    st.header("4. 레이저")
-    st.radio("펄스 시간 프로파일", ["square", "gaussian"], key="profile", horizontal=True,
-             help="square: 폭 τp의 사각 펄스, gaussian: FWHM = τp (동일 fluence로 정규화)")
-    c1, c2 = st.columns(2)
-    c1.number_input("펄스 에너지 [nJ]", min_value=1e-3, max_value=1e7, key="energy_nJ", format="%.4g")
-    c2.number_input("펌프 1/e² 반경 [μm]", min_value=1.0, max_value=40.0, value=10.0, step=1.0, key="spot_um")
-    c1.number_input("프로브 1/e² 반경 [μm]", min_value=0.0, max_value=40.0, value=5.0, step=0.5, key="probe_um",
-                    help="0이면 중심 셀 온도")
-    c2.number_input("구리 반사율 R", min_value=0.0, max_value=0.99, value=0.6, step=0.05, key="reflectivity")
+        st.header("3. Void 형상")
+        st.caption("값을 입력한 뒤 아래 **적용 (재계산)** 버튼을 누르면 반영됩니다.")
+        st.checkbox("void 포함", value=True, key="void_enabled")
+        c1, c2 = st.columns(2)
+        c1.number_input("깊이 (윗면 z) [μm]", min_value=0.0, max_value=500.0, step=0.01, key="void_depth_um", format="%.3f")
+        c2.number_input("두께 [μm]", min_value=0.001, max_value=500.0, step=0.01, key="void_thickness_um", format="%.3f")
+        c1.number_input("반경 위치 (0 = 축상) [μm]", min_value=0.0, max_value=40.0, step=0.01, key="void_rc_um", value=0.0, format="%.3f",
+                        help="0이면 축상의 원판형 void, 0보다 크면 축대칭 링(고리)형 void로 근사합니다.")
+        c2.number_input("반경 반폭 [μm]", min_value=0.001, max_value=40.0, step=0.01, key="void_r_um", format="%.3f")
 
-    with st.expander("고급 수치 설정"):
-        st.select_slider("Fourier 수 Fo = D·Δt/Δz² (Δt 결정)", options=[0.125, 0.25, 0.5, 1.0, 2.0], value=0.5, key="fo",
-                         help="Crank–Nicolson은 무조건 안정이지만 Fo가 크면 급격한 transient에서 진동/정확도 저하가 생길 수 있습니다.")
-        st.slider("관측 시간창 (× τp)", min_value=2.0, max_value=20.0, value=5.0, step=1.0, key="t_end_factor")
-        st.slider("격자 성장률 (외곽 stretched 영역)", min_value=1.05, max_value=1.5, value=1.15, step=0.05, key="stretch")
-        st.checkbox("균질 구리 검증 모드 (실리카 → 구리)", value=False, key="homogeneous",
-                    help="해석해(semi-infinite 구리)와 직접 비교할 때 이산화 오차만 분리하기 위한 모드")
+        st.header("4. 레이저")
+        st.radio("펄스 시간 프로파일", ["square", "gaussian"], key="profile", horizontal=True,
+                 help="square: 폭 τp의 사각 펄스, gaussian: FWHM = τp (동일 fluence로 정규화)")
+        c1, c2 = st.columns(2)
+        c1.number_input("펄스 에너지 [nJ]", min_value=1e-3, max_value=1e7, key="energy_nJ", format="%.4g")
+        c2.number_input("펌프 1/e² 반경 [μm]", min_value=1.0, max_value=40.0, value=10.0, step=1.0, key="spot_um")
+        c1.number_input("프로브 1/e² 반경 [μm]", min_value=0.0, max_value=40.0, value=5.0, step=0.5, key="probe_um",
+                        help="0이면 중심 셀 온도")
+        c2.number_input("구리 반사율 R", min_value=0.0, max_value=0.99, value=0.6, step=0.05, key="reflectivity")
+
+        with st.expander("고급 수치 설정"):
+            st.select_slider("Fourier 수 Fo = D·Δt/Δz² (Δt 결정)", options=[0.125, 0.25, 0.5, 1.0, 2.0], value=0.5, key="fo",
+                             help="Crank–Nicolson은 무조건 안정이지만 Fo가 크면 급격한 transient에서 진동/정확도 저하가 생길 수 있습니다.")
+            st.slider("관측 시간창 (× τp)", min_value=2.0, max_value=20.0, value=5.0, step=1.0, key="t_end_factor")
+            st.slider("격자 성장률 (외곽 stretched 영역)", min_value=1.05, max_value=1.5, value=1.15, step=0.05, key="stretch")
+            st.slider("온도장 스냅샷 개수", min_value=12, max_value=100, value=12, step=1, key="n_snapshots",
+                      help="관측 시간창을 균등 분할하여 저장하는 온도장 개수. 많을수록 온도장 탭의 시간 간격이 촘촘해집니다 (메모리 사용 증가).")
+            st.checkbox("균질 구리 검증 모드 (실리카 → 구리)", value=False, key="homogeneous",
+                        help="해석해(semi-infinite 구리)와 직접 비교할 때 이산화 오차만 분리하기 위한 모드")
+
+        submitted = st.form_submit_button("▶ 적용 (재계산)", type="primary", use_container_width=True)
+
+    if st.session_state.kvoid_idx == KVOID_CUSTOM and st.session_state.kvoid_custom > 1.0:
+        k_custom = st.session_state.kvoid_custom
+        st.warning(f"k_void = {k_custom:g} W/m·K 는 실제 공기 열전도율(0.026)의 약 {k_custom / 0.026:.0f}배입니다. "
+                   "민감도 탭에서 프리셋 값들과 비교해보세요.")
 
     cfg_preview = build_config()
     d = cfg_preview.diagnostics()
@@ -172,6 +197,13 @@ with st.sidebar:
     except ValueError as e:
         n_cells, grid_err = None, str(e)
     st.markdown("---")
+    if st.session_state.void_enabled:
+        v = cfg_preview.void
+        st.caption(
+            f"void 범위: z = {v.depth * 1e6:.3f} ~ {v.z_bottom * 1e6:.3f} μm, "
+            f"r = {v.r_inner * 1e6:.3f} ~ {min(v.r_outer, cfg_preview.geometry.R_cu) * 1e6:.3f} μm, "
+            f"k_void = {v.k:g} W/m·K"
+        )
     st.markdown(
         f"**τp** = {fmt_time(d['tau_p'])}  ·  **Δz** = {fmt_length(d['dz'])}  ·  **Δr** = {fmt_length(d['dr'])}  \n"
         f"**Δt** = {fmt_time(d['dt'])} (Fo={d['fo']:g})  ·  **스텝** = {d['n_steps']:,}  ·  **셀** = {n_cells if n_cells else '—'}  \n"
@@ -181,7 +213,7 @@ with st.sidebar:
         st.warning(w)
     if grid_err:
         st.error(grid_err)
-    apply = st.button("▶ 적용 (재계산)", type="primary", use_container_width=True, disabled=grid_err is not None)
+    apply = submitted and grid_err is None
 
 
 # ----------------------------------------------------------------------------- run
@@ -292,32 +324,78 @@ if view == VIEWS[1]:
         ZZ, RR = np.meshgrid(grid.z_c, grid.r_c, indexing="ij")
         field = T2 - interp(np.stack([ZZ.ravel(), RR.ravel()], axis=1)).reshape(T2.shape)
 
+    is_diff = src_choice.startswith("차이")
+    scale_mode = st.radio(
+        "색 범위", ["전체 시간 고정 (선형)", "전체 시간 고정 (로그)", "스냅샷별 자동"], horizontal=True,
+        help="고정: 모든 스냅샷에 같은 색 범위를 써서 식는 과정이 그대로 보입니다. "
+             "로그: 3자릿수 범위를 표시해 낮은 온도의 퍼짐도 보입니다. 자동: 각 스냅샷의 최대값에 맞춥니다.",
+    )
+    if is_diff and scale_mode.endswith("(로그)"):
+        scale_mode = "전체 시간 고정 (선형)"
+        st.caption("차이(부호 있는 값)에는 로그 스케일을 적용하지 않고 선형 고정 범위를 사용합니다.")
+
+    # Frame fixed over time (based on the whole window) so the field can be compared across snapshots.
     if full:
         r_lim, z_lim = grid.r_faces[-1], grid.z_faces[-1]
     else:
-        r_lim = min(grid.r_faces[-1], max(3 * cfg.laser.w, (cfg.void.r_outer + 3 * cfg.dr) if cfg.void.enabled else 0, 3 * cfg.penetration_length(t_snap if t_snap > 0 else cfg.dt)))
-        z_lim = min(grid.z_faces[-1], max(3 * cfg.penetration_length(max(t_snap, cfg.dt)), (cfg.void.z_bottom + 5 * cfg.numerics.dz) if cfg.void.enabled else 0, 5 * cfg.numerics.dz))
+        L_end = cfg.penetration_length()
+        r_lim = min(grid.r_faces[-1], max(3 * cfg.laser.w, (cfg.void.r_outer + 3 * cfg.dr) if cfg.void.enabled else 0, 2 * L_end))
+        z_lim = min(grid.z_faces[-1], max(2 * L_end, (cfg.void.z_bottom + 5 * cfg.numerics.dz) if cfg.void.enabled else 0, 5 * cfg.numerics.dz))
     ir = np.searchsorted(grid.r_c, r_lim) + 1
     iz = np.searchsorted(grid.z_c, z_lim) + 1
     sub = field[:iz, :ir]
-    cmax = float(np.max(np.abs(sub))) if sub.size else 1.0
-    is_diff = src_choice.startswith("차이")
-    fig = go.Figure(go.Heatmap(
-        x=grid.r_c[:ir] * 1e6, y=grid.z_c[:iz] * 1e6, z=sub,
-        colorscale="RdBu_r" if is_diff else "Inferno", zmid=0.0 if is_diff else None,
-        zmin=-cmax if is_diff else 0.0, zmax=cmax if is_diff else None,
-        colorbar=dict(title="ΔT [K]"),
-        hovertemplate="r=%{x:.2f} μm<br>z=%{y:.2f} μm<br>ΔT=%{z:.4g} K<extra></extra>",
-    ))
+    snap_max = float(np.max(np.abs(sub))) if sub.size else 0.0
+
+    # Global colour range over all snapshots of the selected quantity (cached per result).
+    cache_key = ("field_gmax", id(res), src_choice, full)
+    if cache_key not in st.session_state:
+        if src_choice == "baseline":
+            gmax = max(float(np.max(np.abs(Tk[:iz, :ir] - T0))) for _, Tk in base.snapshots)
+        elif is_diff:
+            gmax = 0.0
+            for (_, Tv), (_, Tb_) in zip(snaps, base.snapshots):
+                itp = RegularGridInterpolator((base.grid.z_c, base.grid.r_c), Tb_, bounds_error=False, fill_value=None)
+                ZZ, RR = np.meshgrid(grid.z_c[:iz], grid.r_c[:ir], indexing="ij")
+                dfld = Tv[:iz, :ir] - itp(np.stack([ZZ.ravel(), RR.ravel()], axis=1)).reshape(iz, ir)
+                gmax = max(gmax, float(np.max(np.abs(dfld))))
+            gmax = max(gmax, 1e-30)
+        else:
+            gmax = max(float(np.max(np.abs(Tk[:iz, :ir] - T0))) for _, Tk in snaps)
+        st.session_state[cache_key] = gmax
+    gmax = st.session_state[cache_key]
+
+    if scale_mode == "스냅샷별 자동":
+        cmax = snap_max if snap_max > 0 else 1.0
+    else:
+        cmax = gmax if gmax > 0 else 1.0
+    if scale_mode.endswith("(로그)"):
+        floor = cmax * 1e-3
+        zplot = np.log10(np.clip(sub, floor, None))
+        heat = go.Heatmap(
+            x=grid.r_c[:ir] * 1e6, y=grid.z_c[:iz] * 1e6, z=zplot, colorscale="Jet",
+            zmin=np.log10(floor), zmax=np.log10(cmax),
+            colorbar=dict(title="log₁₀ ΔT [K]"), customdata=sub,
+            hovertemplate="r=%{x:.2f} μm<br>z=%{y:.2f} μm<br>ΔT=%{customdata:.4g} K<extra></extra>",
+        )
+    else:
+        heat = go.Heatmap(
+            x=grid.r_c[:ir] * 1e6, y=grid.z_c[:iz] * 1e6, z=sub,
+            colorscale="RdBu_r" if is_diff else "Jet", zmid=0.0 if is_diff else None,
+            zmin=-cmax if is_diff else 0.0, zmax=cmax,
+            colorbar=dict(title="ΔT [K]"),
+            hovertemplate="r=%{x:.2f} μm<br>z=%{y:.2f} μm<br>ΔT=%{z:.4g} K<extra></extra>",
+        )
+    fig = go.Figure(heat)
     # material outlines
     if grid.r_faces[ir - 1] * 1e6 >= cfg.geometry.R_cu * 1e6 * 0.999 and not cfg.geometry.homogeneous_copper:
-        fig.add_vline(x=cfg.geometry.R_cu * 1e6, line=dict(color="white", dash="dot"), annotation_text="Cu | SiO₂")
+        fig.add_vline(x=cfg.geometry.R_cu * 1e6, line=dict(color="magenta", dash="dot"), annotation_text="Cu | SiO₂")
     if cfg.void.enabled and src_choice != "baseline":
         v = cfg.void
         fig.add_shape(type="rect", x0=v.r_inner * 1e6, x1=min(v.r_outer, cfg.geometry.R_cu) * 1e6, y0=v.depth * 1e6, y1=v.z_bottom * 1e6,
-                      line=dict(color="cyan", width=2), fillcolor="rgba(0,0,0,0)")
+                      line=dict(color="magenta", width=2), fillcolor="rgba(0,0,0,0)")
     fig.update_layout(
-        title=f"{src_choice} — t = {t_snap * tscale:.3g} {tunit}", xaxis_title="r [μm]", yaxis_title="z (깊이) [μm]",
+        title=f"{src_choice} — t = {t_snap * tscale:.3g} {tunit}  ·  이 스냅샷 최대 |ΔT| = {snap_max:.4g} K  (전체 최대 {gmax:.4g} K)",
+        xaxis_title="r [μm]", yaxis_title="z (깊이) [μm]",
         yaxis=dict(autorange="reversed"), height=520,
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -345,7 +423,7 @@ if view == VIEWS[1]:
         st.plotly_chart(figr, use_container_width=True)
 
     if st.checkbox("3D 표면 플롯 (T(r,z) surface)", value=False):
-        fig3d = go.Figure(go.Surface(x=grid.r_c[:ir] * 1e6, y=grid.z_c[:iz] * 1e6, z=sub, colorscale="Inferno"))
+        fig3d = go.Figure(go.Surface(x=grid.r_c[:ir] * 1e6, y=grid.z_c[:iz] * 1e6, z=sub, colorscale="Jet"))
         fig3d.update_layout(scene=dict(xaxis_title="r [μm]", yaxis_title="z [μm]", zaxis_title="ΔT [K]"), height=600)
         st.plotly_chart(fig3d, use_container_width=True)
 
@@ -475,7 +553,10 @@ if view == VIEWS[4]:
         box = st.container()
         bar, cb = progress_ui(box)
         try:
-            st.session_state.kv = kvoid_sensitivity(cfg, base, progress=cb)
+            ks = [p.k for p in KVOID_PRESETS]
+            if cfg.void.k not in ks:                      # custom value entered by the user
+                ks = sorted(ks + [cfg.void.k])
+            st.session_state.kv = kvoid_sensitivity(cfg, base, ks=ks, progress=cb)
         except Exception as e:  # noqa: BLE001
             st.exception(e)
         finally:

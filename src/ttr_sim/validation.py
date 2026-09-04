@@ -32,11 +32,13 @@ def _sub_progress(progress: Progress, i: int, n: int, label: str):
     return cb
 
 
-def run_pair(cfg: SimConfig, progress: Progress = None) -> tuple[SimResult, SimResult, dict]:
-    """Run baseline (no void) and void case; return both plus the void-signal metrics."""
-    base = run_simulation(baseline_config(cfg), progress=_sub_progress(progress, 0, 2, "baseline (void 없음)"))
+def run_pair(cfg: SimConfig, progress: Progress = None, store_fields: bool = True) -> tuple[SimResult, SimResult, dict]:
+    """Run baseline (no void) and void case; return both plus the void-signal metrics.
+    `store_fields=False` skips the full-field snapshots (validation re-runs never display them)."""
+    base = run_simulation(baseline_config(cfg), progress=_sub_progress(progress, 0, 2, "baseline (void 없음)"),
+                          store_fields=store_fields)
     if cfg.void.enabled:
-        void = run_simulation(cfg, progress=_sub_progress(progress, 1, 2, "void 포함"))
+        void = run_simulation(cfg, progress=_sub_progress(progress, 1, 2, "void 포함"), store_fields=store_fields)
     else:
         void = base
         if progress:
@@ -103,7 +105,7 @@ def grid_convergence(
     names = {"coarse": f"거친 격자 (Δ×{factor:g})", "fine": f"조밀 격자 (Δ/{factor:g}, Δt/{factor ** 2:g})",
              "dt_half": "시간 간격 절반 (Fo/2)"}
     for i, (key, c) in enumerate(jobs):
-        b, v, s = run_pair(c, progress=_sub_progress(progress, i, len(jobs), names[key]))
+        b, v, s = run_pair(c, progress=_sub_progress(progress, i, len(jobs), names[key]), store_fields=False)
         rows[key] = _row(names[key], c, b, v, s)
 
     ref = rows["fine"]
@@ -138,7 +140,7 @@ def kvoid_sensitivity(
     rows = []
     for i, k in enumerate(ks):
         c = replace(cfg, void=replace(cfg.void, k=k))
-        v = run_simulation(c, progress=_sub_progress(progress, i, len(ks), f"k_void = {k:g} W/m·K"))
+        v = run_simulation(c, progress=_sub_progress(progress, i, len(ks), f"k_void = {k:g} W/m·K"), store_fields=False)
         s = void_signal(base, v)
         rows.append(dict(
             k=k, peak_dT=s["peak_dT"], peak_contrast=s["peak_contrast"], t_peak=s["t_peak"],
