@@ -199,6 +199,8 @@ KVOID_CUSTOM = len(KVOID_PRESETS)   # index of the "직접 입력" option in the
 
 # Sidebar label -> VoidSpec.shape
 VOID_SHAPES = {"타원 (회전 타원체 / 링)": "ellipse", "상자 (원판 / 사각 링)": "box"}
+# Sidebar label -> Numerics.t_end_mode
+T_END_MODES = {"펄스폭 배수 (× τp)": "tau_p", "void 깊이 기준 (× d²/D)": "void", "절대 시간 [μs]": "absolute"}
 
 
 def init_state():
@@ -226,8 +228,11 @@ def build_config() -> SimConfig:
         reflectivity=s.reflectivity, probe_w=s.probe_um * UM,
     )
     dz = float(min(max(s.get("dz_um", p.dz * 1e6), DZ_UM_MIN), DZ_UM_MAX)) * UM
-    numerics = Numerics(dz=dz, fo=s.fo, t_end_factor=s.t_end_factor, stretch=s.stretch,
-                        n_snapshots=int(s.get("n_snapshots", 12)))
+    numerics = Numerics(
+        dz=dz, fo=s.fo, t_end_factor=float(s.get("t_end_factor", 5.0)),
+        t_end_mode=T_END_MODES.get(s.get("t_end_mode"), "tau_p"), t_end_abs=float(s.get("t_end_abs_us", 10.0)) * 1e-6,
+        dt_growth=float(s.get("dt_growth", 1.05)), stretch=s.stretch, n_snapshots=int(s.get("n_snapshots", 12)),
+    )
     geometry = Geometry(homogeneous_copper=s.homogeneous)
     return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics)
 
@@ -329,8 +334,21 @@ with st.sidebar:
             )
             st.select_slider("Fourier 수 Fo = D·Δt/Δz² (Δt 결정)", options=[0.125, 0.25, 0.5, 1.0, 2.0], value=0.5, key="fo",
                              help="Crank–Nicolson은 무조건 안정이지만 Fo가 크면 급격한 transient에서 진동/정확도 저하가 생길 수 있습니다.")
-            st.slider("관측 시간창 (× τp)", min_value=2.0, max_value=20.0, value=5.0, step=1.0, key="t_end_factor")
-            st.slider("격자 성장률 (외곽 stretched 영역)", min_value=1.05, max_value=1.5, value=1.15, step=0.05, key="stretch")
+            st.radio(
+                "관측 시간창 기준", list(T_END_MODES.keys()), key="t_end_mode", horizontal=False,
+                help="τp 배수: 짧은 관측 (기본). void 깊이 기준: void 신호가 나타나는 시간 d²/D 의 배수 — 짧은 펄스로 깊은 void 를 볼 때 사용. "
+                     "절대 시간: μs 단위로 직접 지정.",
+            )
+            c1, c2 = st.columns(2)
+            c1.number_input("배수 (× τp 또는 × d²/D)", min_value=2.0, max_value=1e6, value=5.0, step=1.0, key="t_end_factor", format="%.4g")
+            c2.number_input("절대 시간 [μs]", min_value=1e-3, max_value=1e6, value=10.0, step=1.0, key="t_end_abs_us", format="%.4g")
+            st.number_input(
+                "펄스 후 Δt 성장률 (스텝당)", min_value=1.0, max_value=1.5, value=1.05, step=0.01, key="dt_growth", format="%.2f",
+                help="펄스가 끝난 뒤 시간 간격을 스텝마다 이 비율로 키웁니다 (8스텝 블록 단위로 적용, 블록마다 행렬 재분해). "
+                     "1.00 이면 Δt 고정. 1.05 면 Δt ≈ 0.05·t 로 상대 시간 해상도가 일정하게 유지되며, 긴 관측창도 수백 스텝이면 충분합니다.",
+            )
+            st.slider("격자 성장률 (관심 영역 밖)", min_value=1.02, max_value=1.5, value=1.15, step=0.01, key="stretch",
+                      help="표면층과 void 주변은 Δz 로 균일하고, 그 사이·아래·실리카는 셀마다 이 비율로 커집니다. 1.02 면 거의 균일 격자.")
             st.slider("온도장 스냅샷 개수", min_value=12, max_value=100, value=12, step=1, key="n_snapshots",
                       help="관측 시간창을 균등 분할하여 저장하는 온도장 개수. 많을수록 온도장 탭의 시간 간격이 촘촘해집니다 (메모리 사용 증가).")
             st.checkbox("균질 구리 검증 모드 (실리카 → 구리)", value=False, key="homogeneous",
@@ -366,7 +384,9 @@ with st.sidebar:
                 f"(권장: 열 침투 길이 √(D·τp) 를 10등분). 격자가 너무 거칠면 void 신호 해상이 부족하고, 너무 조밀하면 계산량이 급증합니다.")
     st.markdown(
         f"**τp** = {fmt_time(d['tau_p'])}  ·  **Δz** = {fmt_length(d['dz'])} (권장 {dz_rec_um:.2f} μm)  ·  **Δr** = {fmt_length(d['dr'])}  \n"
-        f"**Δt** = {fmt_time(d['dt'])} (Fo={d['fo']:g})  ·  **스텝** = {d['n_steps']:,}  ·  **셀** = {n_cells if n_cells else '—'}  \n"
+        f"**Δt** = {fmt_time(d['dt'])} (Fo={d['fo']:g})"
+        + (f" → 최대 {fmt_time(d['dt_max'])} (성장률 {d['dt_growth']:.2f})" if d['dt_growth'] > 1 and np.isfinite(d['dt_max']) else "")
+        + f"  ·  **스텝** = {d['n_steps']:,}  ·  **셀** = {n_cells if n_cells else '—'}  \n"
         f"**관측창** = {fmt_time(d['t_end'])}  ·  **√(D·t_end)** = {fmt_length(d['L_diff'])}"
     )
     for w in d["warnings"]:
@@ -435,14 +455,22 @@ view = st.radio("보기", VIEWS, horizontal=True, key="view", label_visibility="
 # ----------------------------------------------------------------------------- signal tab
 if view == VIEWS[0]:
     t = base.times * tscale
+    y_mode = st.radio("세로축", ["온도 상승 ΔT [K]", "절대 온도 [°C]"], horizontal=True, key="signal_y_mode",
+                      help=f"절대 온도 = 초기 온도 {T0 - 273.15:.2f} °C + 온도 상승")
+    absolute = y_mode.startswith("절대")
+    offset = (T0 - 273.15) if absolute else 0.0
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=t, y=base.dT_probe, name="baseline (void 없음)", line=dict(color="#1f77b4")))
+    fig.add_trace(go.Scatter(x=t, y=base.dT_probe + offset, name="baseline (void 없음)", line=dict(color="#1f77b4")))
     if cfg.void.enabled:
-        fig.add_trace(go.Scatter(x=void.times * tscale, y=void.dT_probe, name=f"void (k_void={cfg.void.k:g})", line=dict(color="#d62728")))
-    fig.add_trace(go.Scatter(x=t, y=ana["analytic"], name="해석해 (semi-infinite Cu)", line=dict(color="gray", dash="dash")))
+        fig.add_trace(go.Scatter(x=void.times * tscale, y=void.dT_probe + offset, name=f"void (k_void={cfg.void.k:g})", line=dict(color="#d62728")))
+    fig.add_trace(go.Scatter(x=t, y=ana["analytic"] + offset, name="해석해 (semi-infinite Cu)", line=dict(color="gray", dash="dash")))
     pulse_shading(fig, cfg.laser, tscale)
-    fig.update_layout(title="프로브 가중 표면 온도 상승", xaxis_title=f"t [{tunit}]", yaxis_title="ΔT [K]", height=420,
-                      legend=dict(orientation="h", y=-0.2))
+    fig.update_layout(
+        title="프로브 가중 표면 온도" + ("" if absolute else " 상승"), xaxis_title=f"t [{tunit}]",
+        yaxis_title="T [°C]" if absolute else "ΔT [K]", height=420, legend=dict(orientation="h", y=-0.2),
+    )
+    if absolute:
+        fig.add_hline(y=offset, line=dict(color="gray", dash="dot", width=1), annotation_text=f"초기 {offset:.2f} °C")
     st.plotly_chart(fig, use_container_width=True)
 
     if cfg.void.enabled:
@@ -624,9 +652,30 @@ if view == VIEWS[2]:
     fe.update_layout(xaxis_title=f"t [{tunit}]", yaxis_title="E [nJ]", height=320, legend=dict(orientation="h", y=-0.25))
     st.plotly_chart(fe, use_container_width=True)
     st.caption(
-        "모든 경계가 단열(표면 flux 제외)이고 유한체적 이산화가 보존적이므로 이 오차는 행렬 조립 + 선형해 정밀도(~1e-13)를 반영합니다. "
-        "값이 1e-8 이상으로 커지면 격자/시간 간격 설정에 문제가 있다는 신호입니다."
+        "모든 경계가 단열(표면 flux 제외)이고 유한체적 이산화가 보존적이므로 이 오차는 행렬 조립 + 선형해 정밀도(~1e-13)를 반영합니다."
     )
+    with st.expander("에너지 보존 지표 읽는 법", expanded=False):
+        st.markdown(
+            """
+**무엇을 비교하나** 레이저가 구리 표면에 넣어준 에너지(흡수 flux의 시간 적분)와, 계산 영역 전체에 저장된 열에너지 Σρc·V·ΔT를
+매 스텝 비교합니다. 표면 flux 말고는 모든 경계가 단열이므로 두 값은 이론적으로 정확히 같아야 합니다.
+
+**정상 범위**
+
+| 값 | 판정 |
+|---|---|
+| 1e-15 ~ 1e-11 | 정상. 부동소수 반올림 + LU 직접해 정밀도 수준. 격자·시간 간격과 무관하게 이 범위여야 합니다. |
+| 1e-10 ~ 1e-8 | 주의. 셀 수가 수십만 개이거나 Δt 가 극단적으로 작거나 커서 행렬 조건수가 나빠진 경우. 결과는 대개 쓸 수 있지만 원인을 확인하세요. |
+| 1e-6 이상, 또는 NaN/inf | 이상. 행렬 조립 오류, 특이행렬, 재질 물성 입력 오류(0 또는 음수), 격자 면이 겹치는 등 구조적 문제입니다. 결과를 신뢰하지 마세요. |
+
+**이 지표가 잡지 못하는 것** 유한체적 + Crank–Nicolson 은 격자가 아무리 거칠고 Δt 가 아무리 커도 에너지를 정확히 보존합니다.
+따라서 이 값이 작다고 해서 결과가 정확한 것은 아닙니다. 격자·시간 간격이 거칠어서 생기는 오차(이산화 오차)는
+아래의 **해석해 비교** 와 **Grid convergence** 탭에서 확인해야 합니다. 이 지표는 "계산이 구조적으로 깨지지 않았다"는 것만 보증합니다.
+
+**시간에 따른 그래프** 펄스 동안 입력 에너지 곡선이 올라가고 저장 열에너지가 그 위에 정확히 겹쳐야 합니다.
+펄스가 끝난 뒤 두 곡선이 모두 수평이어야 하며, 저장 에너지가 서서히 줄어든다면 어딘가로 열이 새고 있다는 뜻입니다(현재 모델에서는 발생하지 않아야 함).
+            """
+        )
 
     st.subheader("사용된 수치 파라미터")
     rows = [
@@ -634,9 +683,11 @@ if view == VIEWS[2]:
         ("Δz (프리셋, void 영역)", fmt_length(diag["dz"])),
         ("Δz (표면 첫 셀)", fmt_length(void.grid.dz_c[0])),
         ("Δr (관심 영역)", fmt_length(diag["dr"])),
-        ("Δt", fmt_time(diag["dt"])),
-        ("Fo = D·Δt/Δz²", f"{diag['fo']:g}"),
-        ("스텝 수", f"{diag['n_steps']:,}"),
+        ("Δt (펄스 중 / 최대)", f"{fmt_time(diag['dt'])} / {fmt_time(diag['dt_max'])}"),
+        ("펄스 후 Δt 성장률 (스텝당)", f"{diag['dt_growth']:.2f}"),
+        ("Fo = D·Δt/Δz² (펄스 중)", f"{diag['fo']:g}"),
+        ("스텝 수 / 행렬 재분해 횟수", f"{diag['n_steps']:,} / {diag.get('n_factorisations', 1)}"),
+        ("관측창 기준", {"tau_p": "펄스폭 배수", "void": "void 깊이 기준 (d²/D 배수)", "absolute": "절대 시간"}[diag["t_end_mode"]]),
         ("셀 수 (nr × nz)", f"{diag['n_cells']:,} ({diag['nr']} × {diag['nz']})"),
         ("관측 시간창 t_end", fmt_time(diag["t_end"])),
         ("열 침투 깊이 √(D·t_end)", fmt_length(diag["L_diff"])),
@@ -667,6 +718,32 @@ if view == VIEWS[2]:
         "ΔT(0,0,t) = q₀w/(k√(2π))·arctan(√(8Dt)/w) 의 step 응답을 펄스 형상으로 중첩/컨볼루션. "
         "수치해와 같은 프로브 가중치로 평가합니다."
     )
+    with st.expander("해석해 비교 지표 읽는 법", expanded=False):
+        st.markdown(
+            """
+**기대하는 모습** 두 곡선은 거의 겹쳐야 하고, 차이 곡선은 0 근처에서 작은 진동만 보여야 합니다.
+격자를 2배 조밀하게 하면(Grid convergence 탭) 차이가 약 1/4 로 줄어드는 2차 수렴이 정상입니다.
+
+**차이가 0으로 수렴하는 조건** 해석해는 "무한히 넓고 깊은 균질 구리"를 가정합니다. 따라서 차이가 0으로 수렴하는 것은
+두 조건이 만족될 때뿐입니다. (1) 격자·Δt 를 조밀하게 할수록 → 이산화 오차 감소. (2) 열이 구리/실리카 계면(r = 40 μm)이나
+후면(z = 500 μm)에 도달하지 않는 시간창 → 기하 조건이 같음. 열이 계면에 닿은 뒤에는 실제 물리가 해석해와 달라지므로
+(실리카가 열을 가둬 표면이 더 뜨겁게 유지됨) 차이가 남는 것이 **맞는** 결과이고, 이때는 위에 안내 문구가 표시됩니다.
+이산화 오차만 따로 보려면 고급 수치 설정의 "균질 구리 검증 모드"를 켜고 비교하세요. 그 모드에서는 차이가 격자 조밀화에 따라 0으로 수렴해야 합니다.
+
+**수치 기준**
+
+| RMS 상대 편차 | 판정 |
+|---|---|
+| 0.5 % 미만 | 정상. 권장 Δz, Fo = 0.5 에서의 전형적인 값. |
+| 0.5 ~ 3 % | 열이 계면·후면에 도달했는지 확인 (안내 문구). 균질 구리 모드에서도 이 수준이면 격자가 거친 것이니 Δz 를 줄여 보세요. |
+| 3 % 이상 (균질 구리 모드) | 이산화 오차가 큽니다. Δz, Fo, Δt 성장률을 줄이고 Grid convergence 로 수렴을 확인하세요. |
+
+**최대 상대 편차가 RMS 보다 훨씬 큰 경우** 사각 펄스의 켜짐/꺼짐 순간에는 온도 기울기가 불연속이라 그 한두 스텝에서 편차가 튑니다.
+이는 시간 이산화의 고유한 현상이며 신호 해석에는 영향이 없습니다. 판정에는 RMS 를 쓰세요.
+
+**피크 상대 편차** 표면 온도 피크의 높이 차이입니다. 펄스 동안 표면 셀 온도를 셀 면으로 외삽하는 보정이 들어가 있어 권장 격자에서 1 % 이내여야 합니다.
+            """
+        )
 
 # ----------------------------------------------------------------------------- grid convergence tab
 if view == VIEWS[3]:

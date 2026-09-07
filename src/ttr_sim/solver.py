@@ -131,14 +131,19 @@ class Laser:
 
 @dataclass
 class Numerics:
-    dz: float                    # axial spacing in the fine region, m
+    dz: float                    # axial spacing in the fine regions (surface layer, void zone), m
     dr: Optional[float] = None   # radial spacing in the fine region, m (None -> automatic)
-    fo: float = 0.5              # Fourier number D_cu*dt/dz^2 used to pick dt
-    t_end_factor: float = 5.0    # observation window = factor * tau_p (+ pulse offset for Gaussian)
-    stretch: float = 1.15        # geometric growth ratio outside the fine region
+    fo: float = 0.5              # Fourier number D_cu*dt/dz^2 used to pick the initial dt
+    t_end_factor: float = 5.0    # observation window multiplier (see t_end_mode)
+    t_end_mode: str = "tau_p"    # "tau_p": factor*tau_p | "void": factor*d_void^2/D | "absolute": t_end_abs
+    t_end_abs: float = 1e-6      # absolute observation window, s (t_end_mode == "absolute")
+    dt_growth: float = 1.05      # per-step growth of dt after the pulse (1.0 = constant dt); applied in blocks
+    dt_block: int = 8            # steps per constant-dt block (one LU factorisation per block)
+    stretch: float = 1.15        # geometric growth ratio of the grid outside the fine regions
     T0: float = 293.15           # initial / ambient temperature, K
     n_snapshots: int = 12        # number of stored full-field snapshots
     max_cells: int = 600_000
+    max_steps: int = 400_000
 
 
 @dataclass
@@ -163,17 +168,66 @@ class SimConfig:
 
     @property
     def dt(self) -> float:
+        """Initial (pulse-phase) time step."""
         return self.numerics.fo * self.numerics.dz ** 2 / self.copper.alpha
 
     @property
     def t_end(self) -> float:
-        la = self.laser
+        la, n = self.laser, self.numerics
         extra = la.t_center - 0.5 * la.tau_p if la.profile == "gaussian" else 0.0
-        return self.numerics.t_end_factor * la.tau_p + extra
+        t_pulse_based = n.t_end_factor * la.tau_p + extra
+        if n.t_end_mode == "void" and self.void.depth > 0:
+            # uses the void depth even when the void is disabled, so the baseline run of a pair
+            # covers exactly the same window as the void run
+            tau_void = self.void.depth ** 2 / self.copper.alpha
+            return max(n.t_end_factor * tau_void, 2.0 * la.tau_p + extra)
+        if n.t_end_mode == "absolute":
+            return max(float(n.t_end_abs), la.pulse_end * 1.05)
+        return t_pulse_based
+
+    def time_grid(self) -> np.ndarray:
+        """Step boundaries t_0=0 < ... < t_N = t_end.
+
+        Constant dt (= self.dt) while the laser is on; afterwards dt is multiplied by
+        dt_growth**dt_block after every block of dt_block steps (Crank-Nicolson is unconditionally
+        stable, and per-step growth g keeps dt ~ (g-1)*t, i.e. a fixed relative resolution in time).
+        """
+        n = self.numerics
+        dt0, t_end, g, B = self.dt, self.t_end, max(1.0, float(n.dt_growth)), max(1, int(n.dt_block))
+        pulse_end = self.laser.pulse_end
+        times = [0.0]
+        t, dt = 0.0, dt0
+        while t < t_end:
+            if t >= pulse_end and g > 1.0:
+                for _ in range(B):
+                    if t >= t_end:
+                        break
+                    step = min(dt, t_end - t)
+                    t += step
+                    times.append(t)
+                dt *= g ** B
+            else:
+                step = min(dt, t_end - t)
+                t += step
+                times.append(t)
+            if len(times) > n.max_steps:
+                raise ValueError(
+                    f"시간 스텝 수가 한도({n.max_steps:,})를 넘습니다. 관측 시간창을 줄이거나 Δt 성장률/격자 간격을 키우세요."
+                )
+        times = np.array(times)
+        # avoid a vanishingly small final step: merge it into the previous one
+        if len(times) > 2 and (times[-1] - times[-2]) < 1e-3 * (times[-2] - times[-3]):
+            times = np.delete(times, -2)
+        times[-1] = t_end
+        return times
 
     @property
     def n_steps(self) -> int:
-        return int(math.ceil(self.t_end / self.dt))
+        return len(self.time_grid()) - 1
+
+    @property
+    def dt_max(self) -> float:
+        return float(np.max(np.diff(self.time_grid())))
 
     def penetration_length(self, t: Optional[float] = None) -> float:
         """Thermal penetration length sqrt(D_cu * t)."""
@@ -202,9 +256,16 @@ class SimConfig:
         if self.void.enabled and self.void.thickness < 2 * n.dz:
             warnings.append(f"void 두께({self.void.thickness * 1e6:.2f} μm)가 격자 Δz의 2배보다 작아 해상이 부족합니다.")
         interface_reached = L_diff > (g.R_cu - la.w)
+        try:
+            tg = self.time_grid()
+            n_steps, dt_max = len(tg) - 1, float(np.max(np.diff(tg)))
+        except ValueError as e:
+            warnings.append(str(e))
+            n_steps, dt_max = n.max_steps, float("nan")
         return dict(
-            dz=n.dz, dr=self.dr, dt=self.dt, fo=n.fo, tau_p=la.tau_p, t_end=self.t_end,
-            n_steps=self.n_steps, L_diff=L_diff, L_diff_silica=L_diff_si, flux_ratio=flux_ratio,
+            dz=n.dz, dr=self.dr, dt=self.dt, dt_max=dt_max, dt_growth=n.dt_growth, fo=n.fo, tau_p=la.tau_p,
+            t_end=self.t_end, t_end_mode=n.t_end_mode,
+            n_steps=n_steps, L_diff=L_diff, L_diff_silica=L_diff_si, flux_ratio=flux_ratio,
             interface_reached=interface_reached, warnings=warnings, I0=la.I0,
             q_abs_peak=la.I0 * (1 - la.reflectivity),
             fluence_peak=la.I0 * la.tau_p,
@@ -316,35 +377,76 @@ def _segmented(start: float, breakpoints, end: float, d: float, d_start: Optiona
     return np.concatenate(faces)
 
 
+def _graded_faces(a: float, b: float, d_start: float, d_end: float, ratio: float) -> np.ndarray:
+    """Faces from a to b whose spacing grows geometrically away from both ends (d_start at a, d_end at b)
+    and meets in the middle: a coarse 'bridge' between two fine zones (b included, a excluded)."""
+    Ltot = b - a
+    if Ltot <= 1e-15:
+        return np.empty(0)
+    left, right, sl, sr = [], [], d_start, d_end
+    while sum(left) + sum(right) < Ltot:
+        if sl <= sr:
+            left.append(sl)
+            sl *= ratio
+        else:
+            right.append(sr)
+            sr *= ratio
+    spac = np.array(left + right[::-1])
+    spac *= Ltot / spac.sum()
+    faces = a + np.cumsum(spac)
+    faces[-1] = b
+    return faces
+
+
 def build_grid(cfg: SimConfig) -> Grid:
+    """Axial grid: a uniform surface layer (dz) resolving the pulse deposition, a uniform zone around the
+    void (dz), a geometrically graded bridge between them and a stretched tail down to z = L.  The
+    temperature field smooths as sqrt(D t) away from the surface, so cells growing roughly in
+    proportion to depth lose no accuracy while keeping the cell count small even for a short pulse
+    (fine dz) combined with a deep void."""
     g, v, la, n = cfg.geometry, cfg.void, cfg.laser, cfg.numerics
     dz, dr = n.dz, cfg.dr
-    L_diff = cfg.penetration_length()
 
-    # ---- axial: fine uniform region covering the penetration depth and the void, then stretched to L
-    z_fine = 3.0 * L_diff
-    if v.enabled:
-        z_fine = max(z_fine, min(v.z_bottom, g.L) + 5.0 * dz)
-    z_fine = min(z_fine, g.L)
-    if g.L - z_fine < 2 * dz:
-        z_fine = g.L
-    bps = [v.depth, v.z_bottom] if v.enabled else []
-    # Surface refinement: when the preset dz is coarser than the radial spacing (i.e. the spot is
-    # smaller than dz) the 2-D spreading near the surface would be unresolved.  Use dz_surf = dr in a
-    # layer ~2w deep and let the spacing grow to the preset dz below it.
-    dz_surf = None
-    if dr < dz:
-        dz_surf = dr
-        z_layer = min(2.0 * la.w, z_fine)
-        bps = [z_layer] + bps
-    z_faces = _segmented(0.0, bps, z_fine, dz, d_start=dz_surf, ratio=n.stretch)
-    if z_fine < g.L:
-        z_faces = np.concatenate([z_faces, _stretched_faces(z_fine, g.L, dz, n.stretch)])
+    # ---- surface layer: >= 10 pulse penetration lengths, >= 5 cells, plus the 2w spot layer if refined
+    dz_surf = dr if dr < dz else None           # radial spacing finer than dz -> refine the first ~2w in z too
+    z_s = max(10.0 * math.sqrt(cfg.copper.alpha * la.tau_p), 5.0 * dz)
+    if dz_surf is not None:
+        z_s = max(z_s, 2.0 * la.w)
+    z_s = min(z_s, g.L)
+    bps = [min(2.0 * la.w, z_s)] if dz_surf is not None else []
+
+    # ---- void zone: uniform dz from (depth - margin) to (bottom + margin), faces on the void boundaries
+    if v.enabled and v.depth < g.L:
+        margin = min(v.thickness, 5.0 * dz)
+        zv0, zv1 = max(0.0, v.depth - margin), min(g.L, v.z_bottom + margin)
+    else:
+        zv0, zv1 = None, None
+
+    if zv0 is not None and zv0 <= z_s + 2.0 * dz:
+        # shallow void: one uniform region from the surface to below the void
+        z_uni = max(z_s, zv1)
+        if g.L - z_uni < 2 * dz:
+            z_uni = g.L
+        z_faces = _segmented(0.0, bps + [v.depth, v.z_bottom], z_uni, dz, d_start=dz_surf, ratio=n.stretch)
+    else:
+        if zv0 is None and g.L - z_s < 2 * dz:
+            z_s = g.L
+        z_faces = _segmented(0.0, bps, z_s, dz, d_start=dz_surf, ratio=n.stretch)
+        if zv0 is not None:
+            # graded bridge, then the uniform void zone
+            z_faces = np.concatenate([z_faces, _graded_faces(z_s, zv0, dz, dz, n.stretch)])
+            z_faces = np.concatenate([z_faces, _segmented(zv0, [v.depth, v.z_bottom], zv1, dz)[1:]])
+            z_uni = zv1
+        else:
+            z_uni = z_s
+    if z_uni < g.L:
+        z_faces = np.concatenate([z_faces, _stretched_faces(z_uni, g.L, dz, n.stretch)])
 
     # ---- radial: fine uniform region (spot + void), stretched to R_cu, then silica shell
     r_fine = 2.0 * la.w
-    if v.enabled:
-        r_fine = max(r_fine, min(v.r_outer, g.R_cu) + 5.0 * dr)
+    if v.enabled and v.r_outer < g.R_cu * (1 - 1e-9):
+        # resolve the void's radial edge; a void reaching the copper boundary needs no extra radial refinement
+        r_fine = max(r_fine, v.r_outer + 5.0 * dr)
     r_fine = min(r_fine, g.R_cu)
     if g.R_cu - r_fine < 2 * dr:
         r_fine = g.R_cu
@@ -503,11 +605,15 @@ def run_simulation(
 
     C = (rho_cp * grid.volume).ravel()                       # J/K per cell
     Lap = assemble_laplacian(grid, k)
-    dt = cfg.dt
-    Cdt = sp.diags(C / dt)
-    A = (Cdt + 0.5 * Lap).tocsc()
-    B = (Cdt - 0.5 * Lap).tocsr()
-    lu = spla.splu(A)
+    Cdiag = sp.diags(C)
+    times = cfg.time_grid()
+    dts = np.diff(times)
+
+    lu, B, dt_cur, n_factor = None, None, None, 0
+
+    def factorise(dt):
+        A = (Cdiag * (1.0 / dt) + 0.5 * Lap).tocsc()
+        return spla.splu(A), (Cdiag * (1.0 / dt) - 0.5 * Lap).tocsr()
 
     # surface source (W per cell at f = 1): copper cells of the j = 0 row
     la = cfg.laser
@@ -517,8 +623,7 @@ def run_simulation(
     src = np.zeros(N)
     src[:nr] = q_abs * Wsrc
 
-    n_steps = cfg.n_steps
-    times = np.arange(n_steps + 1) * dt
+    n_steps = len(times) - 1
     pulse = la.f(times)
     T0 = cfg.numerics.T0
     # The problem is linear: integrate the temperature *rise* theta = T - T0 (avoids cancellation in
@@ -559,6 +664,11 @@ def run_simulation(
     src_total = src.sum()
     f_mean = la.f_mean(times[:-1], times[1:])       # exact step-averaged pulse profile
     for n in range(n_steps):
+        dt = dts[n]
+        if dt_cur is None or abs(dt - dt_cur) > 1e-12 * dt_cur:
+            lu, B = factorise(dt)                   # one LU per constant-dt block
+            dt_cur = dt
+            n_factor += 1
         f_half = f_mean[n]
         rhs = B @ T + src * f_half
         T = lu.solve(rhs)
@@ -569,7 +679,7 @@ def run_simulation(
 
     diag = cfg.diagnostics()
     diag.update(
-        n_cells=N, nr=nr, nz=nz, absorbed_energy=float(E_in[-1]),
+        n_cells=N, nr=nr, nz=nz, absorbed_energy=float(E_in[-1]), n_factorisations=n_factor,
         absorbed_fraction_in_rod=float(Wsrc.sum() / (0.5 * math.pi * la.w ** 2)),
     )
     return SimResult(
@@ -600,13 +710,17 @@ def void_signal(base: SimResult, void: SimResult) -> dict:
     dT = void.T_probe - Tb
     rise_b = Tb - base.config.numerics.T0
     i_peak = int(np.argmax(np.abs(dT)))
-    valid = rise_b > 0.01 * rise_b.max()
+    # Relative contrast where the baseline rise is still resolvable (>= 1e-3 of its peak; deep voids
+    # under short pulses respond when the surface has cooled to ~1e-4 of the peak, so the threshold
+    # must be well below the classic 1%).
+    valid = rise_b > 1e-3 * rise_b.max()
     contrast = np.zeros_like(dT)
     contrast[valid] = dT[valid] / rise_b[valid]
     i_c = int(np.argmax(np.abs(contrast)))
+    contrast_at_peak = float(dT[i_peak] / rise_b[i_peak]) if rise_b[i_peak] > 0 else float("nan")
     return dict(
         dT=dT, contrast=contrast, Tb=Tb,
-        peak_dT=float(dT[i_peak]), t_peak=float(t[i_peak]),
+        peak_dT=float(dT[i_peak]), t_peak=float(t[i_peak]), contrast_at_peak=contrast_at_peak,
         peak_contrast=float(contrast[i_c]), t_peak_contrast=float(t[i_c]),
         peak_rise_base=float(rise_b.max()),
         peak_rise_void=float((void.T_probe - void.config.numerics.T0).max()),

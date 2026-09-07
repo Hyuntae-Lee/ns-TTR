@@ -43,20 +43,24 @@ def center_step_response(tau, q0: float, w: float, mat: Material) -> np.ndarray:
     return q0 * w / (mat.k * math.sqrt(2.0 * math.pi)) * np.arctan(np.sqrt(8.0 * mat.alpha * tau) / w)
 
 
-def analytic_surface_signal(r, t, laser: Laser, mat: Material) -> np.ndarray:
-    """dT(r, 0, t) for the configured pulse shape, shape (len(t), len(r)). `t` must be uniform."""
+def analytic_surface_signal(r, t, laser: Laser, mat: Material, n_stairs: int = 200) -> np.ndarray:
+    """dT(r, 0, t) for the configured pulse shape, shape (len(t), len(r)).  `t` may be non-uniform."""
     t = np.asarray(t, dtype=float)
     q0 = laser.I0 * (1.0 - laser.reflectivity)
     if laser.profile == "square":
         return (surface_step_response(r, t, q0, laser.w, mat)
                 - surface_step_response(r, t - laser.tau_p, q0, laser.w, mat))
-    # Gaussian: dT(t) = f(0) S(t) + Int_0^t f'(t') S(t - t') dt'
-    S = surface_step_response(r, t, q0, laser.w, mat)                 # (nt, nr)
-    dt = t[1] - t[0]
-    fp = laser.fprime(t)
-    out = float(laser.f(0.0)) * S
-    for i in range(S.shape[1]):
-        out[:, i] += np.convolve(fp, S[:, i])[: len(t)] * dt
+    # Gaussian: represent f(t) as a staircase of n_stairs steps over its support and superpose the
+    # step responses (Duhamel).  Works for any output time grid.
+    t_max = laser.t_center + 4.0 * laser.sigma
+    edges = np.linspace(0.0, t_max, n_stairs + 1)
+    mids = 0.5 * (edges[1:] + edges[:-1])
+    levels = np.concatenate([[0.0], laser.f(mids), [0.0]])       # f = 0 before 0 and after t_max
+    jumps = np.diff(levels)                                        # step heights at the edges
+    out = np.zeros((len(t), len(np.atleast_1d(r))))
+    for tk, dfk in zip(edges, jumps):
+        if dfk != 0.0:
+            out += dfk * surface_step_response(r, t - tk, q0, laser.w, mat)
     return out
 
 

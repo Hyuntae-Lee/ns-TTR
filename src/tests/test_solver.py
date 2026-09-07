@@ -72,9 +72,49 @@ def test_grid_faces_align_with_interfaces():
 
 
 def test_dt_from_fourier_number():
-    cfg = make_cfg(2, fo=0.5)
+    cfg = make_cfg(2, fo=0.5, dt_growth=1.0)
     assert COPPER.alpha * cfg.dt / cfg.numerics.dz ** 2 == pytest.approx(0.5)
-    assert cfg.n_steps == pytest.approx(1000, abs=10)  # 5 tau_p / (tau_p/200)
+    assert cfg.n_steps == pytest.approx(1000, abs=10)  # 5 tau_p / (tau_p/200), constant dt
+
+
+def test_time_grid_growth():
+    cfg = make_cfg(2, fo=0.5, dt_growth=1.05)
+    t = cfg.time_grid()
+    dts = np.diff(t)
+    assert t[0] == 0.0 and t[-1] == pytest.approx(cfg.t_end)
+    assert np.all(dts > 0)
+    n_pulse = int(np.sum(t[:-1] < cfg.laser.tau_p))
+    assert n_pulse == pytest.approx(200, abs=2)                      # constant dt during the pulse
+    assert np.allclose(dts[:n_pulse], cfg.dt)
+    assert dts.max() > 10 * cfg.dt and len(t) < 400                   # grows afterwards -> far fewer steps
+    assert dts.max() <= 0.06 * cfg.t_end                              # dt ~ 5% of elapsed time
+
+
+def test_void_based_window_and_short_pulse_deep_void():
+    """Short pulse (preset 0) + deep void: feasible only with the graded grid and growing dt."""
+    p = DEPTH_PRESETS[0]
+    cfg = SimConfig(
+        geometry=Geometry(),
+        void=VoidSpec(enabled=True, depth=150e-6, thickness=40e-6, r_half=40e-6, k=1.0, shape="box"),
+        laser=Laser(tau_p=p.tau_p, energy=100e-9, w=10e-6, probe_w=5e-6),
+        numerics=Numerics(dz=p.dz, t_end_mode="void", t_end_factor=3.0, dt_growth=1.05, n_snapshots=6),
+    )
+    tau_void = cfg.void.depth ** 2 / COPPER.alpha
+    assert cfg.t_end == pytest.approx(3.0 * tau_void)                 # ~0.6 ms window from a 17 ns pulse
+    g = build_grid(cfg)
+    assert g.n_cells < 300_000 and cfg.n_steps < 2000
+    assert np.any(np.isclose(g.z_faces, cfg.void.depth)) and np.any(np.isclose(g.z_faces, cfg.void.z_bottom))
+    base, void, sig = run_pair(cfg)
+    assert abs(base.energy_error) < 1e-9 and abs(void.energy_error) < 1e-9
+    assert sig["peak_dT"] > 0 and sig["t_peak"] > 0.3 * tau_void    # signature arrives on the d^2/D time scale
+
+
+@pytest.mark.parametrize("profile", ["square", "gaussian"])
+def test_analytic_with_growing_dt(profile):
+    cfg = make_cfg(2, profile=profile, homogeneous=True, dt_growth=1.05)
+    base = run_simulation(baseline_config(cfg))
+    cmp = analytic_comparison(base)
+    assert cmp["rms_rel"] < 0.015 and abs(cmp["peak_rel"]) < 0.02
 
 
 # ----------------------------------------------------------------------------- energy conservation
