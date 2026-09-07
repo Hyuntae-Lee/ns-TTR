@@ -59,10 +59,16 @@ def test_grid_faces_align_with_interfaces():
     assert np.all(np.diff(g.r_faces) > 0) and np.all(np.diff(g.z_faces) > 0)
     mat = material_map(cfg, g)
     assert (mat == MAT_VOID).any() and (mat == MAT_SILICA).any()
-    # void volume matches the requested cylinder to within a cell
+    # default void shape is an on-axis spheroid (semi-axes r_half, r_half, thickness/2)
     vol_void = (g.volume * (mat == MAT_VOID)).sum()
-    vol_expected = math.pi * cfg.void.r_outer ** 2 * cfg.void.thickness
-    assert vol_void == pytest.approx(vol_expected, rel=1e-6)
+    vol_spheroid = 4.0 / 3.0 * math.pi * cfg.void.r_half ** 2 * (0.5 * cfg.void.thickness)
+    assert vol_void == pytest.approx(vol_spheroid, rel=0.15)      # staircase approximation on a coarse grid
+    # the box variant reproduces the cylinder exactly because its faces are grid-aligned
+    cfg_box = replace(cfg, void=replace(cfg.void, shape="box"))
+    mat_box = material_map(cfg_box, g)
+    vol_box = (g.volume * (mat_box == MAT_VOID)).sum()
+    assert vol_box == pytest.approx(math.pi * cfg.void.r_outer ** 2 * cfg.void.thickness, rel=1e-6)
+    assert vol_void < vol_box
 
 
 def test_dt_from_fourier_number():

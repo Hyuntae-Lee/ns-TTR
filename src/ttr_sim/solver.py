@@ -54,6 +54,11 @@ class VoidSpec:
     r_half: float = 10e-6        # radial half-extent, m
     k: float = 1.0               # "floor" conductivity used for the void, W/(m K)
     rho_cp: float = AIR.rho_cp   # volumetric heat capacity of the void filling
+    shape: str = "ellipse"       # "ellipse": elliptical (r, z) cross-section inscribed in the box below; "box": rectangle
+
+    @property
+    def z_center(self) -> float:
+        return self.depth + 0.5 * self.thickness
 
     @property
     def r_inner(self) -> float:
@@ -369,10 +374,16 @@ def material_map(cfg: SimConfig, grid: Grid) -> np.ndarray:
         mat[np.broadcast_to(rc >= cfg.geometry.R_cu, mat.shape)] = MAT_SILICA
     v = cfg.void
     if v.enabled:
-        inside = (
-            (zc >= v.depth) & (zc < v.z_bottom) & (rc >= v.r_inner) & (rc < v.r_outer) & (rc < cfg.geometry.R_cu)
-        )
-        mat[inside] = MAT_VOID
+        in_box = (zc >= v.depth) & (zc < v.z_bottom) & (rc >= v.r_inner) & (rc < v.r_outer)
+        if v.shape == "ellipse":
+            # Elliptical cross-section in the (r, z) plane: an oblate/prolate spheroid when on the axis,
+            # a torus with elliptical section when r_center > 0.  Semi-axes: r_half and thickness/2.
+            ell = ((rc - v.r_center) / v.r_half) ** 2 + ((zc - v.z_center) / (0.5 * v.thickness)) ** 2 < 1.0
+            inside = in_box & ell
+        else:
+            inside = in_box
+        inside = inside & (rc < cfg.geometry.R_cu)
+        mat[np.broadcast_to(inside, mat.shape)] = MAT_VOID
     return mat
 
 

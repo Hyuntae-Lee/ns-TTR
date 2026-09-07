@@ -27,7 +27,7 @@ class DepthPreset:
 
     @property
     def display(self) -> str:
-        return f"{self.label}  |  τp={fmt_time(self.tau_p)}, Δz={self.dz * 1e6:.2f} μm"
+        return f"{self.label}  |  τp={fmt_time(self.tau_p)} (권장 Δz={self.dz * 1e6:.2f} μm)"
 
 
 DEPTH_PRESETS = [

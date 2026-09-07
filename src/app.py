@@ -4,6 +4,7 @@ Run locally with:  streamlit run app.py
 """
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import replace
 
@@ -11,6 +12,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 from scipy.interpolate import RegularGridInterpolator
 
 from ttr_sim import DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec
@@ -22,6 +24,138 @@ from ttr_sim.validation import analytic_comparison, grid_convergence, kvoid_sens
 st.set_page_config(page_title="ns-TTR Void Simulator", page_icon="🔬", layout="wide")
 
 UM = 1e-6
+
+# Temperature colour scale: navy (coldest) → blue → cyan → green → yellow → orange → pure bright red (hottest).
+TEMP_COLORSCALE = [
+    [0.00, "#141466"], [0.14, "#0000ff"], [0.32, "#00c8ff"], [0.50, "#00e000"],
+    [0.68, "#ffff00"], [0.85, "#ff8c00"], [1.00, "#ff0000"],
+]
+
+
+# Browser-side behaviour for the temperature-field figure.  FIELD_PARENT_JS is injected ONCE into the
+# main page as a <script> (so it runs in the page's own realm and survives Streamlit re-renders and view
+# switches); FIELD_TOOLBAR_HTML is a small same-origin iframe with zoom / snapshot buttons that call it.
+FIELD_PARENT_JS = r"""
+(function () {
+  if (window.__ttrField) return;
+  const isFieldGd = g => !!(g && g._fullLayout && g._fullLayout.meta && g._fullLayout.meta.tag === 'ttr-field' &&
+      g._transitionData && g._transitionData._frames && g._transitionData._frames.length > 1);
+  const findGd = () => Array.from(document.querySelectorAll('.js-plotly-plot')).find(isFieldGd) || null;
+  const gdOf = el => { const g = (el && el.closest) ? el.closest('.js-plotly-plot') : null; return isFieldGd(g) ? g : null; };
+  const anim = { mode: 'immediate', frame: { duration: 0, redraw: true }, transition: { duration: 0 } };
+
+  const api = {
+    findGd: findGd,
+    step: function (dir) {
+      const gd = findGd(); if (!gd) return;
+      const n = gd._transitionData._frames.length;
+      const sl = gd._fullLayout.sliders && gd._fullLayout.sliders[0];
+      const cur = sl ? sl.active : 0;
+      const k = Math.min(n - 1, Math.max(0, cur + dir));
+      if (k === cur) return;
+      Plotly.relayout(gd, { 'sliders[0].active': k });
+      Plotly.animate(gd, [String(k)], anim);
+    },
+    zoomLevel: function () {               // magnification relative to the full-cylinder view (1 = whole rod)
+      const gd = findGd(); if (!gd) return 1;
+      const yr = gd._fullLayout.yaxis.range;
+      return gd._fullLayout.meta.L / Math.abs(yr[1] - yr[0]);
+    },
+    setZoom: function (f) {                // absolute magnification about the current view centre, aspect kept
+      const gd = findGd(); if (!gd) return;
+      const m = gd._fullLayout.meta;
+      const xr = gd._fullLayout.xaxis.range, yr = gd._fullLayout.yaxis.range;
+      let cx = (xr[0] + xr[1]) / 2, cy = (yr[0] + yr[1]) / 2;
+      const hy = (m.L / 2) / f, hx = m.R / f;
+      cy = Math.min(Math.max(cy, hy), m.L - hy);           // keep the view inside 0..L in depth
+      Plotly.relayout(gd, { 'xaxis.range': [cx - hx, cx + hx], 'yaxis.range': [cy + hy, cy - hy] });
+    },
+    reset: function () {
+      const gd = findGd(); if (!gd) return;
+      const m = gd._fullLayout.meta;
+      Plotly.relayout(gd, { 'xaxis.range': [-m.R, m.R], 'yaxis.range': [m.L, 0] });
+    },
+    focus: function () {
+      const gd = findGd(); if (!gd) return;
+      if (!gd.hasAttribute('tabindex')) gd.setAttribute('tabindex', '0');
+      gd.style.outline = 'none';
+      gd.focus({ preventScroll: true });
+      gd.style.boxShadow = '0 0 0 2px #d62728';
+    }
+  };
+  window.__ttrField = api;
+
+  // Clicking on the figure gives it keyboard focus (red outline) so the arrow keys go straight to it.
+  document.addEventListener('mousedown', function (e) {
+    if (gdOf(e.target)) setTimeout(api.focus, 0);
+  }, true);
+  document.addEventListener('focusout', function (e) {
+    const gd = gdOf(e.target); if (gd && e.target === gd) gd.style.boxShadow = '';
+  }, true);
+
+  // Left/Right arrows step the snapshot while the field figure is on screen (unless typing in a field).
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (!gdOf(e.target)) {
+      const tag = (e.target && e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || (e.target && e.target.isContentEditable)) return;
+      if (!findGd()) return;
+    }
+    e.preventDefault(); e.stopImmediatePropagation();
+    api.step(e.key === 'ArrowRight' ? 1 : -1);
+  }, true);
+})();
+"""
+
+FIELD_TOOLBAR_HTML = """
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  .bar { display: flex; gap: 6px; align-items: center; padding: 4px 0; }
+  button { font-size: 14px; padding: 4px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f7f7f7; cursor: pointer; }
+  button:hover { background: #e9e9e9; }
+  .sep { width: 12px; }
+  .hint { color: #666; font-size: 12px; margin-left: 8px; }
+  label { font-size: 13px; color: #333; }
+  input[type=range] { width: 260px; vertical-align: middle; }
+  #zlabel { display: inline-block; min-width: 52px; font-variant-numeric: tabular-nums; }
+</style>
+<div class="bar">
+  <button id="prev">◀ 이전 스냅샷</button>
+  <button id="next">다음 스냅샷 ▶</button>
+  <span class="sep"></span>
+  <label>확대 <span id="zlabel">×1.0</span></label>
+  <input id="zoom" type="range" min="0" max="6" step="0.02" value="0" title="배율 (로그 눈금, ×1 ~ ×64)">
+  <button id="reset">전체 보기</button>
+  <span class="hint">키보드 ←/→ 도 스냅샷 이동 (그림을 한 번 클릭해 포커스를 주면 확실합니다)</span>
+</div>
+<script>
+(function () {
+  const W = window.parent, D = W.document;
+  if (!W.__ttrField) {
+    const s = D.createElement('script');
+    s.textContent = __PARENT_CODE__;
+    D.head.appendChild(s);
+  }
+  const call = f => () => { try { f(); } catch (err) { console.error(err); } };
+  const zoom = document.getElementById('zoom'), zlabel = document.getElementById('zlabel');
+  const show = f => { zlabel.textContent = '×' + (f < 10 ? f.toFixed(1) : f.toFixed(0)); };
+  document.getElementById('prev').onclick = call(() => W.__ttrField.step(-1));
+  document.getElementById('next').onclick = call(() => W.__ttrField.step(1));
+  zoom.oninput = call(() => { const f = Math.pow(2, parseFloat(zoom.value)); show(f); W.__ttrField.setZoom(f); });
+  document.getElementById('reset').onclick = call(() => { W.__ttrField.reset(); zoom.value = 0; show(1); });
+  // Keep the slider in sync when the view is changed elsewhere (double-click reset, modebar, drag-zoom).
+  setInterval(() => {
+    try {
+      if (document.activeElement === zoom) return;
+      const f = W.__ttrField.zoomLevel();
+      if (!isFinite(f) || f <= 0) return;
+      const v = Math.min(6, Math.max(0, Math.log2(f)));
+      if (Math.abs(v - parseFloat(zoom.value)) > 0.03) { zoom.value = v.toFixed(2); show(f); }
+    } catch (err) {}
+  }, 500);
+})();
+</script>
+""".replace("__PARENT_CODE__", json.dumps(FIELD_PARENT_JS))
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -48,7 +182,11 @@ def preset_defaults(idx: int) -> dict:
         void_thickness_um=max(round(0.5 * d_um, 3), round(2 * p.dz * 1e6, 3)),
         void_r_um=min(round(2 * d_um, 3), 40.0),
         energy_nJ=default_energy_nJ(p.tau_p),
+        dz_um=round(p.dz * 1e6, 3),          # recommended grid spacing for this pulse width (editable)
     )
+
+
+DZ_UM_MIN, DZ_UM_MAX = 0.14, 56.57          # allowed grid spacing range (spec table extremes)
 
 
 def on_preset_change():
@@ -58,6 +196,9 @@ def on_preset_change():
 
 
 KVOID_CUSTOM = len(KVOID_PRESETS)   # index of the "직접 입력" option in the k_void selectbox
+
+# Sidebar label -> VoidSpec.shape
+VOID_SHAPES = {"타원 (회전 타원체 / 링)": "ellipse", "상자 (원판 / 사각 링)": "box"}
 
 
 def init_state():
@@ -78,12 +219,14 @@ def build_config() -> SimConfig:
     void = VoidSpec(
         enabled=s.void_enabled, depth=s.void_depth_um * UM, thickness=s.void_thickness_um * UM,
         r_center=s.void_rc_um * UM, r_half=s.void_r_um * UM, k=k_void, rho_cp=AIR.rho_cp,
+        shape=VOID_SHAPES.get(s.get("void_shape"), "ellipse"),
     )
     laser = Laser(
         tau_p=p.tau_p, profile=s.profile, energy=s.energy_nJ * 1e-9, w=s.spot_um * UM,
         reflectivity=s.reflectivity, probe_w=s.probe_um * UM,
     )
-    numerics = Numerics(dz=p.dz, fo=s.fo, t_end_factor=s.t_end_factor, stretch=s.stretch,
+    dz = float(min(max(s.get("dz_um", p.dz * 1e6), DZ_UM_MIN), DZ_UM_MAX)) * UM
+    numerics = Numerics(dz=dz, fo=s.fo, t_end_factor=s.t_end_factor, stretch=s.stretch,
                         n_snapshots=int(s.get("n_snapshots", 12)))
     geometry = Geometry(homogeneous_copper=s.homogeneous)
     return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics)
@@ -125,7 +268,7 @@ with st.sidebar:
     st.selectbox(
         "목표 void 깊이 → 펄스폭 + 격자 (짝으로 결정)", options=list(range(len(DEPTH_PRESETS))),
         format_func=lambda i: DEPTH_PRESETS[i].display, key="preset_idx", on_change=on_preset_change,
-        help="τp = 2·d²/D_th, Δz = √(D_th·τp)/10. 펄스폭과 격자는 직접 입력하지 않고 프리셋으로만 바꿉니다.",
+        help="τp = 2·d²/D_th 로 펄스폭이 정해집니다. 권장 격자 Δz = √(D_th·τp)/10 은 고급 수치 설정에 기본값으로 채워지며 거기서 바꿀 수 있습니다.",
     )
     preset = DEPTH_PRESETS[st.session_state.preset_idx]
     if preset.warning:
@@ -154,6 +297,12 @@ with st.sidebar:
         st.header("3. Void 형상")
         st.caption("값을 입력한 뒤 아래 **적용 (재계산)** 버튼을 누르면 반영됩니다.")
         st.checkbox("void 포함", value=True, key="void_enabled")
+        st.radio(
+            "void 단면 형상", list(VOID_SHAPES.keys()), key="void_shape", horizontal=True,
+            help="타원: (r, z) 단면이 타원 — 축상이면 회전 타원체, 반경 위치 > 0 이면 타원 단면의 링. "
+                 "상자: 단면이 직사각형 — 축상이면 원판, 반경 위치 > 0 이면 사각 단면의 링. "
+                 "아래 깊이/두께/반경은 두 형상 모두 외접 상자의 치수입니다. 상자형이 반경 반폭 40 μm 이면 단면 전체를 막습니다.",
+        )
         c1, c2 = st.columns(2)
         c1.number_input("깊이 (윗면 z) [μm]", min_value=0.0, max_value=500.0, step=0.01, key="void_depth_um", format="%.3f")
         c2.number_input("두께 [μm]", min_value=0.001, max_value=500.0, step=0.01, key="void_thickness_um", format="%.3f")
@@ -172,6 +321,12 @@ with st.sidebar:
         c2.number_input("구리 반사율 R", min_value=0.0, max_value=0.99, value=0.6, step=0.05, key="reflectivity")
 
         with st.expander("고급 수치 설정"):
+            st.number_input(
+                f"격자 간격 Δz [μm] ({DZ_UM_MIN} ~ {DZ_UM_MAX})", min_value=DZ_UM_MIN, max_value=DZ_UM_MAX, step=0.01,
+                key="dz_um", format="%.3f",
+                help="관심 영역(표면~void)의 축 방향 격자 간격. 프리셋을 바꾸면 권장값 √(D·τp)/10 이 다시 채워지며, 여기서 자유롭게 바꿀 수 있습니다. "
+                     "Δt 는 Fo 와 이 값으로 정해집니다 (Δt = Fo·Δz²/D).",
+            )
             st.select_slider("Fourier 수 Fo = D·Δt/Δz² (Δt 결정)", options=[0.125, 0.25, 0.5, 1.0, 2.0], value=0.5, key="fo",
                              help="Crank–Nicolson은 무조건 안정이지만 Fo가 크면 급격한 transient에서 진동/정확도 저하가 생길 수 있습니다.")
             st.slider("관측 시간창 (× τp)", min_value=2.0, max_value=20.0, value=5.0, step=1.0, key="t_end_factor")
@@ -199,13 +354,18 @@ with st.sidebar:
     st.markdown("---")
     if st.session_state.void_enabled:
         v = cfg_preview.void
+        blocks_all = v.shape == "box" and v.r_inner == 0 and v.r_outer >= cfg_preview.geometry.R_cu * (1 - 1e-9)
         st.caption(
-            f"void 범위: z = {v.depth * 1e6:.3f} ~ {v.z_bottom * 1e6:.3f} μm, "
+            f"void ({'타원' if v.shape == 'ellipse' else '상자'}) 범위: z = {v.depth * 1e6:.3f} ~ {v.z_bottom * 1e6:.3f} μm, "
             f"r = {v.r_inner * 1e6:.3f} ~ {min(v.r_outer, cfg_preview.geometry.R_cu) * 1e6:.3f} μm, "
-            f"k_void = {v.k:g} W/m·K"
+            f"k_void = {v.k:g} W/m·K" + ("  — 단면 전체를 가로막음 (우회로 없음)" if blocks_all else "")
         )
+    dz_rec_um = preset.dz * 1e6
+    if abs(d["dz"] * 1e6 / dz_rec_um - 1) > 0.5:
+        st.info(f"선택한 Δz = {d['dz'] * 1e6:.3f} μm 는 이 펄스폭의 권장값 {dz_rec_um:.2f} μm 와 크게 다릅니다 "
+                f"(권장: 열 침투 길이 √(D·τp) 를 10등분). 격자가 너무 거칠면 void 신호 해상이 부족하고, 너무 조밀하면 계산량이 급증합니다.")
     st.markdown(
-        f"**τp** = {fmt_time(d['tau_p'])}  ·  **Δz** = {fmt_length(d['dz'])}  ·  **Δr** = {fmt_length(d['dr'])}  \n"
+        f"**τp** = {fmt_time(d['tau_p'])}  ·  **Δz** = {fmt_length(d['dz'])} (권장 {dz_rec_um:.2f} μm)  ·  **Δr** = {fmt_length(d['dr'])}  \n"
         f"**Δt** = {fmt_time(d['dt'])} (Fo={d['fo']:g})  ·  **스텝** = {d['n_steps']:,}  ·  **셀** = {n_cells if n_cells else '—'}  \n"
         f"**관측창** = {fmt_time(d['t_end'])}  ·  **√(D·t_end)** = {fmt_length(d['L_diff'])}"
     )
@@ -308,123 +468,146 @@ if view == VIEWS[0]:
 if view == VIEWS[1]:
     src_choice = st.radio("표시 대상", ["void 케이스", "baseline", "차이 (void − baseline)"], horizontal=True,
                           disabled=not cfg.void.enabled)
-    full = st.checkbox("전체 도메인 표시 (기본: 관심 영역 확대)", value=False)
     snaps = void.snapshots if cfg.void.enabled else base.snapshots
-    idx = st.slider("스냅샷", 0, len(snaps) - 1, min(len(snaps) - 1, len(snaps) // 3),
-                    format="%d", help="시간 순으로 저장된 온도장 스냅샷")
-    t_snap, T2 = snaps[idx]
-    grid = void.grid if cfg.void.enabled else base.grid
-    field = T2 - T0
-    if src_choice == "baseline":
-        _, Tb = base.snapshots[idx]
-        grid, field = base.grid, Tb - T0
-    elif src_choice.startswith("차이"):
-        _, Tb = base.snapshots[idx]
-        interp = RegularGridInterpolator((base.grid.z_c, base.grid.r_c), Tb, bounds_error=False, fill_value=None)
-        ZZ, RR = np.meshgrid(grid.z_c, grid.r_c, indexing="ij")
-        field = T2 - interp(np.stack([ZZ.ravel(), RR.ravel()], axis=1)).reshape(T2.shape)
-
     is_diff = src_choice.startswith("차이")
-    scale_mode = st.radio(
-        "색 범위", ["전체 시간 고정 (선형)", "전체 시간 고정 (로그)", "스냅샷별 자동"], horizontal=True,
-        help="고정: 모든 스냅샷에 같은 색 범위를 써서 식는 과정이 그대로 보입니다. "
-             "로그: 3자릿수 범위를 표시해 낮은 온도의 퍼짐도 보입니다. 자동: 각 스냅샷의 최대값에 맞춥니다.",
-    )
-    if is_diff and scale_mode.endswith("(로그)"):
-        scale_mode = "전체 시간 고정 (선형)"
-        st.caption("차이(부호 있는 값)에는 로그 스케일을 적용하지 않고 선형 고정 범위를 사용합니다.")
+    grid = void.grid if cfg.void.enabled else base.grid
+    g_plot = base.grid if src_choice == "baseline" else grid
 
-    # Frame fixed over time (based on the whole window) so the field can be compared across snapshots.
-    if full:
-        r_lim, z_lim = grid.r_faces[-1], grid.z_faces[-1]
-    else:
-        L_end = cfg.penetration_length()
-        r_lim = min(grid.r_faces[-1], max(3 * cfg.laser.w, (cfg.void.r_outer + 3 * cfg.dr) if cfg.void.enabled else 0, 2 * L_end))
-        z_lim = min(grid.z_faces[-1], max(2 * L_end, (cfg.void.z_bottom + 5 * cfg.numerics.dz) if cfg.void.enabled else 0, 5 * cfg.numerics.dz))
-    ir = np.searchsorted(grid.r_c, r_lim) + 1
-    iz = np.searchsorted(grid.z_c, z_lim) + 1
-    sub = field[:iz, :ir]
-    snap_max = float(np.max(np.abs(sub))) if sub.size else 0.0
-
-    # Global colour range over all snapshots of the selected quantity (cached per result).
-    cache_key = ("field_gmax", id(res), src_choice, full)
-    if cache_key not in st.session_state:
+    def field_at(i: int) -> np.ndarray:
+        """ΔT field (nz, nr) on g_plot for snapshot i of the selected quantity."""
         if src_choice == "baseline":
-            gmax = max(float(np.max(np.abs(Tk[:iz, :ir] - T0))) for _, Tk in base.snapshots)
-        elif is_diff:
-            gmax = 0.0
-            for (_, Tv), (_, Tb_) in zip(snaps, base.snapshots):
-                itp = RegularGridInterpolator((base.grid.z_c, base.grid.r_c), Tb_, bounds_error=False, fill_value=None)
-                ZZ, RR = np.meshgrid(grid.z_c[:iz], grid.r_c[:ir], indexing="ij")
-                dfld = Tv[:iz, :ir] - itp(np.stack([ZZ.ravel(), RR.ravel()], axis=1)).reshape(iz, ir)
-                gmax = max(gmax, float(np.max(np.abs(dfld))))
-            gmax = max(gmax, 1e-30)
-        else:
-            gmax = max(float(np.max(np.abs(Tk[:iz, :ir] - T0))) for _, Tk in snaps)
-        st.session_state[cache_key] = gmax
-    gmax = st.session_state[cache_key]
+            return base.snapshots[i][1] - T0
+        Tv = snaps[i][1]
+        if is_diff:
+            Tb_ = base.snapshots[i][1]
+            itp = RegularGridInterpolator((base.grid.z_c, base.grid.r_c), Tb_, bounds_error=False, fill_value=None)
+            ZZ, RR = np.meshgrid(grid.z_c, grid.r_c, indexing="ij")
+            return Tv - itp(np.stack([ZZ.ravel(), RR.ravel()], axis=1)).reshape(Tv.shape)
+        return Tv - T0
 
-    if scale_mode == "스냅샷별 자동":
-        cmax = snap_max if snap_max > 0 else 1.0
-    else:
-        cmax = gmax if gmax > 0 else 1.0
-    if scale_mode.endswith("(로그)"):
-        floor = cmax * 1e-3
-        zplot = np.log10(np.clip(sub, floor, None))
-        heat = go.Heatmap(
-            x=grid.r_c[:ir] * 1e6, y=grid.z_c[:iz] * 1e6, z=zplot, colorscale="Jet",
-            zmin=np.log10(floor), zmax=np.log10(cmax),
-            colorbar=dict(title="log₁₀ ΔT [K]"), customdata=sub,
-            hovertemplate="r=%{x:.2f} μm<br>z=%{y:.2f} μm<br>ΔT=%{customdata:.4g} K<extra></extra>",
-        )
-    else:
-        heat = go.Heatmap(
-            x=grid.r_c[:ir] * 1e6, y=grid.z_c[:iz] * 1e6, z=sub,
-            colorscale="RdBu_r" if is_diff else "Jet", zmid=0.0 if is_diff else None,
-            zmin=-cmax if is_diff else 0.0, zmax=cmax,
-            colorbar=dict(title="ΔT [K]"),
-            hovertemplate="r=%{x:.2f} μm<br>z=%{y:.2f} μm<br>ΔT=%{z:.4g} K<extra></extra>",
-        )
-    fig = go.Figure(heat)
-    # material outlines
-    if grid.r_faces[ir - 1] * 1e6 >= cfg.geometry.R_cu * 1e6 * 0.999 and not cfg.geometry.homogeneous_copper:
-        fig.add_vline(x=cfg.geometry.R_cu * 1e6, line=dict(color="magenta", dash="dot"), annotation_text="Cu | SiO₂")
+    # Display region: the whole copper cylinder, |r| <= 40 μm (mirrored about the axis), 0 <= z <= 500 μm.
+    R_cu_um, L_um = cfg.geometry.R_cu * 1e6, cfg.geometry.L * 1e6
+    ir = int(np.argmin(np.abs(g_plot.r_faces - cfg.geometry.R_cu)))      # number of radial cells inside the copper
+    x_um = np.concatenate([-g_plot.r_c[:ir][::-1], g_plot.r_c[:ir]]) * 1e6
+    z_um = g_plot.z_c * 1e6
+
+    # All snapshots are embedded as Plotly animation frames: moving the in-figure slider swaps the frame
+    # data in the browser only (no Streamlit rerun, no redraw of the figure, zoom/pan preserved).
+    # Frames are thinned if the total payload would be too large.
+    MAX_VALUES = 2_000_000
+    per_frame = len(z_um) * len(x_um)
+    step = max(1, int(math.ceil(len(snaps) * per_frame / MAX_VALUES)))
+    frame_idx = sorted(set(range(0, len(snaps), step)) | {len(snaps) - 1})
+    cache_key = ("field_frames", id(res), src_choice)
+    if cache_key not in st.session_state:
+        fields = []
+        for i in frame_idx:
+            f = field_at(i)[:, :ir]
+            fields.append(np.concatenate([f[:, ::-1], f], axis=1).astype(np.float32))
+        gmax = max(max(float(np.max(np.abs(f))) for f in fields), 1e-30)
+        st.session_state[cache_key] = (fields, gmax)
+    fields, gmax = st.session_state[cache_key]
+    frame_t = [snaps[i][0] for i in frame_idx]
+    frame_max = [float(np.max(np.abs(f))) for f in fields]
+
+    def frame_title(k: int) -> str:
+        return f"t = {frame_t[k] * tscale:.3g} {tunit}   ·   이 스냅샷 최대 |ΔT| = {frame_max[k]:.4g} K"
+
+    init = min(len(fields) - 1, len(fields) // 3)
+    colorscale = "RdBu_r" if is_diff else TEMP_COLORSCALE
+    heat_kw = dict(
+        x=x_um, y=z_um, colorscale=colorscale, zmid=0.0 if is_diff else None,
+        zmin=-gmax if is_diff else 0.0, zmax=gmax, zauto=False,
+        colorbar=dict(title="ΔT [K]", thickness=12, len=0.9),
+        hovertemplate="r=%{x:.2f} μm<br>z=%{y:.2f} μm<br>ΔT=%{z:.4g} K<extra></extra>",
+    )
+    frames = [
+        go.Frame(name=str(k), data=[go.Heatmap(z=fields[k], **heat_kw)], layout=go.Layout(title_text=frame_title(k)))
+        for k in range(len(fields))
+    ]
+    fig = go.Figure(data=[go.Heatmap(z=fields[init], **heat_kw)], frames=frames)
+
     if cfg.void.enabled and src_choice != "baseline":
         v = cfg.void
-        fig.add_shape(type="rect", x0=v.r_inner * 1e6, x1=min(v.r_outer, cfg.geometry.R_cu) * 1e6, y0=v.depth * 1e6, y1=v.z_bottom * 1e6,
-                      line=dict(color="magenta", width=2), fillcolor="rgba(0,0,0,0)")
-    fig.update_layout(
-        title=f"{src_choice} — t = {t_snap * tscale:.3g} {tunit}  ·  이 스냅샷 최대 |ΔT| = {snap_max:.4g} K  (전체 최대 {gmax:.4g} K)",
-        xaxis_title="r [μm]", yaxis_title="z (깊이) [μm]",
-        yaxis=dict(autorange="reversed"), height=520,
-    )
-    st.plotly_chart(fig, use_container_width=True)
+        for sgn in ((1,) if v.r_center == 0 else (1, -1)):
+            xa, xb = sgn * (v.r_center - v.r_half) * 1e6, sgn * (v.r_center + v.r_half) * 1e6
+            fig.add_shape(type="circle" if v.shape == "ellipse" else "rect",
+                          x0=min(xa, xb), x1=max(xa, xb), y0=v.depth * 1e6, y1=v.z_bottom * 1e6,
+                          line=dict(color="magenta", width=2), fillcolor="rgba(0,0,0,0)")
+    # Copper boundary markers (the heatmap covers |r| <= R_cu; the grey area outside is silica, not plotted).
+    for xr in (-R_cu_um, R_cu_um):
+        fig.add_vline(x=xr, line=dict(color="gray", dash="dot", width=1))
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**축상(r≈0) 깊이 프로파일**")
+    anim_args = dict(mode="immediate", frame=dict(duration=0, redraw=True), transition=dict(duration=0))
+    slider_steps = [
+        dict(method="animate", args=[[str(k)], anim_args], label=f"{frame_t[k] * tscale:.3g}")
+        for k in range(len(fields))
+    ]
+    # Canvas: height fixed; width = 3x the width needed for the 1:1 full-cylinder view.
+    # constrain="range": the plot area fills the whole canvas and the 1:1 aspect is kept by widening the
+    # r-axis range instead of shrinking the plot area, so the tick labels stay tied to the map coordinates.
+    # layout.meta tags the figure for the browser-side handlers in FIELD_JS.
+    PLOT_H = 900
+    base_w = int(PLOT_H * (2 * R_cu_um) / L_um) + 230
+    fig.update_layout(
+        title=dict(text=frame_title(init), font=dict(size=14)), meta=dict(tag="ttr-field", R=R_cu_um, L=L_um),
+        xaxis=dict(title="r [μm]", range=[-R_cu_um, R_cu_um], constrain="range", zeroline=False),
+        yaxis=dict(title="z (깊이) [μm]", range=[L_um, 0], scaleanchor="x", scaleratio=1, constrain="range"),
+        dragmode="pan", uirevision="field", height=PLOT_H, width=3 * base_w,
+        margin=dict(l=60, r=10, t=50, b=90), plot_bgcolor="#e8e8e8",
+        sliders=[dict(
+            active=init, steps=slider_steps, x=0.0, y=-0.02, len=1.0, pad=dict(t=40, b=0),
+            currentvalue=dict(prefix="스냅샷 t = ", suffix=f" {tunit}", visible=True, xanchor="left"),
+        )],
+    )
+    st.plotly_chart(fig, use_container_width=False,
+                    config={"scrollZoom": False, "displayModeBar": True, "doubleClick": "reset", "displaylogo": False})
+    components.html(FIELD_TOOLBAR_HTML, height=46)   # snapshot / zoom buttons + arrow-key handler (see FIELD_PARENT_JS)
+    thinned = f" (저장된 {len(snaps)}개 중 {len(fields)}개 표시 — 데이터 양 제한)" if len(fields) < len(snaps) else ""
+    st.caption(
+        f"전체 원기둥 단면 (⌀{2 * R_cu_um:.0f} μm × {L_um:.0f} μm, 실제 비율). 색 범위 0 ~ {gmax:.4g} K 는 전체 시간에 고정. "
+        f"그림 아래 슬라이더, 이전/다음 버튼 또는 키보드 ←/→ 로 스냅샷을 바꾸면 브라우저 안에서 프레임만 교체됩니다 (재계산·재렌더링 없음, 확대 상태 유지){thinned}. "
+        f"확대/축소는 배율 슬라이더로, 이동은 드래그로, 전체 보기 버튼 또는 더블클릭으로 초기화합니다. 자홍색 윤곽 = void, 회색 점선 = 구리 경계."
+    )
+
+    L_end = cfg.penetration_length()
+    z_prof = min(cfg.geometry.L, max(2 * L_end, (cfg.void.z_bottom + 5 * cfg.numerics.dz) if cfg.void.enabled else 0, 5 * cfg.numerics.dz))
+    r_prof = min(cfg.geometry.R_cu, max(3 * cfg.laser.w, (cfg.void.r_outer + 3 * cfg.dr) if cfg.void.enabled else 0, 2 * L_end))
+    iz_p = int(np.searchsorted(g_plot.z_c, z_prof)) + 1
+    ir_p = min(ir, int(np.searchsorted(g_plot.r_c, r_prof)) + 1)
+
+    col_axial, col_radial = st.columns(2)
+    with col_axial:
+        st.markdown(f"**축상(r≈0) 깊이 프로파일** (z ≤ {z_prof * 1e6:.3g} μm)")
         figa = go.Figure()
         for k_i in np.linspace(0, len(snaps) - 1, min(6, len(snaps))).round().astype(int):
-            ts, Tk = snaps[k_i]
-            figa.add_trace(go.Scatter(x=grid.z_c[:iz] * 1e6 if src_choice != "baseline" else base.grid.z_c[:iz] * 1e6,
-                                      y=(Tk[:iz, 0] - T0), name=f"t={ts * tscale:.3g} {tunit}"))
-        if cfg.void.enabled:
-            figa.add_vrect(x0=cfg.void.depth * 1e6, x1=cfg.void.z_bottom * 1e6, fillcolor="cyan", opacity=0.15, line_width=0, annotation_text="void")
-        figa.update_layout(xaxis_title="z [μm]", yaxis_title="ΔT [K]", height=380, legend=dict(orientation="h", y=-0.3))
+            ts = snaps[k_i][0]
+            figa.add_trace(go.Scatter(x=g_plot.z_c[:iz_p] * 1e6, y=field_at(k_i)[:iz_p, 0], name=f"t={ts * tscale:.3g} {tunit}"))
+        if cfg.void.enabled and src_choice != "baseline":
+            figa.add_vrect(x0=cfg.void.depth * 1e6, x1=cfg.void.z_bottom * 1e6, fillcolor="magenta", opacity=0.12, line_width=0, annotation_text="void")
+        figa.update_layout(xaxis_title="z [μm]", yaxis_title="ΔT [K]", height=400, legend=dict(orientation="h", y=-0.3), margin=dict(t=20))
         st.plotly_chart(figa, use_container_width=True)
-    with c2:
-        st.markdown("**표면(z=0) 반경 프로파일**")
+    with col_radial:
+        st.markdown(f"**표면(z=0) 반경 프로파일** (|r| ≤ {r_prof * 1e6:.3g} μm)")
         figr = go.Figure()
         res_r = void if (cfg.void.enabled and src_choice != "baseline") else base
         for k_i in np.linspace(0, len(res_r.times) - 1, 6).round().astype(int):
-            figr.add_trace(go.Scatter(x=res_r.grid.r_c[:ir] * 1e6, y=res_r.T_surface[k_i, :ir] - T0,
+            rr = res_r.grid.r_c[:ir_p] * 1e6
+            yy = res_r.T_surface[k_i, :ir_p] - T0
+            figr.add_trace(go.Scatter(x=np.concatenate([-rr[::-1], rr]), y=np.concatenate([yy[::-1], yy]),
                                       name=f"t={res_r.times[k_i] * tscale:.3g} {tunit}"))
-        figr.update_layout(xaxis_title="r [μm]", yaxis_title="ΔT [K]", height=380, legend=dict(orientation="h", y=-0.3))
+        figr.update_layout(xaxis_title="r [μm]", yaxis_title="ΔT [K]", height=400, legend=dict(orientation="h", y=-0.3), margin=dict(t=20))
         st.plotly_chart(figr, use_container_width=True)
 
-    if st.checkbox("3D 표면 플롯 (T(r,z) surface)", value=False):
-        fig3d = go.Figure(go.Surface(x=grid.r_c[:ir] * 1e6, y=grid.z_c[:iz] * 1e6, z=sub, colorscale="Jet"))
-        fig3d.update_layout(scene=dict(xaxis_title="r [μm]", yaxis_title="z [μm]", zaxis_title="ΔT [K]"), height=600)
+    if st.checkbox("3D 표면 플롯 (관심 영역, T(r,z) surface)", value=False):
+        k3 = st.slider("3D 플롯 스냅샷", 0, len(fields) - 1, init, format="%d")
+        sub3 = field_at(frame_idx[k3])[:iz_p, :ir_p]
+        fig3d = go.Figure(go.Surface(
+            x=np.concatenate([-g_plot.r_c[:ir_p][::-1], g_plot.r_c[:ir_p]]) * 1e6, y=g_plot.z_c[:iz_p] * 1e6,
+            z=np.concatenate([sub3[:, ::-1], sub3], axis=1), colorscale=colorscale, cmin=0.0, cmax=gmax,
+        ))
+        fig3d.update_layout(title=f"t = {frame_t[k3] * tscale:.3g} {tunit}",
+                            scene=dict(xaxis_title="r [μm]", yaxis_title="z [μm]", zaxis_title="ΔT [K]"), height=600)
         st.plotly_chart(fig3d, use_container_width=True)
 
 # ----------------------------------------------------------------------------- validation tab
