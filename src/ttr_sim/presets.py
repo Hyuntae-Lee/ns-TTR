@@ -27,11 +27,26 @@ class DepthPreset:
 
     @property
     def display(self) -> str:
-        return f"{self.label}  |  τp={fmt_time(self.tau_p)} (권장 Δz={self.dz * 1e6:.2f} μm)"
+        """Selectbox label: depth range | τp | recommended Δz, padded so the columns line up.
+        The GUI renders the selectbox in a monospace font (Consolas) with white-space: pre."""
+        lo, hi = self.depth_range.replace(" μm", "").split("~")
+        rng = f"{_padnum(lo, 3)} ~ {_padnum(hi, 3)} μm"
+        tau_val, tau_unit = fmt_time(self.tau_p).split(" ")
+        tau = f"{_padnum(tau_val, 4)} {tau_unit}"
+        return f"{rng} │ τp = {tau} │ Δz = {_padnum(f'{self.dz * 1e6:.2f}', 5)} μm"
+
+
+PAD_CHAR = " "   # plain spaces: the GUI shows these labels in a monospace font with white-space: pre
+
+
+def _padnum(s: str, width: int) -> str:
+    """Right-align a numeric string to `width` characters."""
+    s = s.strip()
+    return PAD_CHAR * max(0, width - len(s)) + s
 
 
 DEPTH_PRESETS = [
-    DepthPreset("표면 극근접 (~2μm)", "~2 μm", 1e-6),
+    DepthPreset("표면 극근접 (~2μm)", "0~2 μm", 1e-6),
     DepthPreset("얕은 void (2~5μm)", "2~5 μm", 2e-6),
     DepthPreset("서브표면 (5~10μm)", "5~10 μm", 5e-6),
     DepthPreset("중간 깊이 (10~20μm)", "10~20 μm", 10e-6),

@@ -16,6 +16,7 @@ import streamlit.components.v1 as components
 from scipy.interpolate import RegularGridInterpolator
 
 from ttr_sim import DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec
+from ttr_sim.analytic import center_step_response
 from ttr_sim.materials import AIR, COPPER, COPPER_ABSORPTION_DEPTH, FUSED_SILICA
 from ttr_sim.presets import fmt_length, fmt_time
 from ttr_sim.solver import MAT_VOID, build_grid, material_map
@@ -56,20 +57,6 @@ FIELD_PARENT_JS = r"""
       Plotly.relayout(gd, { 'sliders[0].active': k });
       Plotly.animate(gd, [String(k)], anim);
     },
-    zoomLevel: function () {               // magnification relative to the full-cylinder view (1 = whole rod)
-      const gd = findGd(); if (!gd) return 1;
-      const yr = gd._fullLayout.yaxis.range;
-      return gd._fullLayout.meta.L / Math.abs(yr[1] - yr[0]);
-    },
-    setZoom: function (f) {                // absolute magnification about the current view centre, aspect kept
-      const gd = findGd(); if (!gd) return;
-      const m = gd._fullLayout.meta;
-      const xr = gd._fullLayout.xaxis.range, yr = gd._fullLayout.yaxis.range;
-      let cx = (xr[0] + xr[1]) / 2, cy = (yr[0] + yr[1]) / 2;
-      const hy = (m.L / 2) / f, hx = m.R / f;
-      cy = Math.min(Math.max(cy, hy), m.L - hy);           // keep the view inside 0..L in depth
-      Plotly.relayout(gd, { 'xaxis.range': [cx - hx, cx + hx], 'yaxis.range': [cy + hy, cy - hy] });
-    },
     reset: function () {
       const gd = findGd(); if (!gd) return;
       const m = gd._fullLayout.meta;
@@ -84,6 +71,12 @@ FIELD_PARENT_JS = r"""
     }
   };
   window.__ttrField = api;
+
+  // Plain wheel over the figure = page scroll; Ctrl+wheel = Plotly zoom (only ctrl-wheel reaches Plotly's
+  // scrollZoom handler, which itself prevents the browser's page-zoom default).
+  document.addEventListener('wheel', function (e) {
+    if (gdOf(e.target) && !e.ctrlKey) e.stopImmediatePropagation();
+  }, { capture: true, passive: false });
 
   // Clicking on the figure gives it keyboard focus (red outline) so the arrow keys go straight to it.
   document.addEventListener('mousedown', function (e) {
@@ -115,18 +108,13 @@ FIELD_TOOLBAR_HTML = """
   button:hover { background: #e9e9e9; }
   .sep { width: 12px; }
   .hint { color: #666; font-size: 12px; margin-left: 8px; }
-  label { font-size: 13px; color: #333; }
-  input[type=range] { width: 260px; vertical-align: middle; }
-  #zlabel { display: inline-block; min-width: 52px; font-variant-numeric: tabular-nums; }
 </style>
 <div class="bar">
   <button id="prev">◀ 이전 스냅샷</button>
   <button id="next">다음 스냅샷 ▶</button>
   <span class="sep"></span>
-  <label>확대 <span id="zlabel">×1.0</span></label>
-  <input id="zoom" type="range" min="0" max="6" step="0.02" value="0" title="배율 (로그 눈금, ×1 ~ ×64)">
   <button id="reset">전체 보기</button>
-  <span class="hint">키보드 ←/→ 도 스냅샷 이동 (그림을 한 번 클릭해 포커스를 주면 확실합니다)</span>
+  <span class="hint">Ctrl+스크롤 = 확대/축소 · 드래그 = 이동 · 키보드 ←/→ = 스냅샷 이동 (그림을 한 번 클릭해 포커스를 주면 확실합니다)</span>
 </div>
 <script>
 (function () {
@@ -137,22 +125,9 @@ FIELD_TOOLBAR_HTML = """
     D.head.appendChild(s);
   }
   const call = f => () => { try { f(); } catch (err) { console.error(err); } };
-  const zoom = document.getElementById('zoom'), zlabel = document.getElementById('zlabel');
-  const show = f => { zlabel.textContent = '×' + (f < 10 ? f.toFixed(1) : f.toFixed(0)); };
   document.getElementById('prev').onclick = call(() => W.__ttrField.step(-1));
   document.getElementById('next').onclick = call(() => W.__ttrField.step(1));
-  zoom.oninput = call(() => { const f = Math.pow(2, parseFloat(zoom.value)); show(f); W.__ttrField.setZoom(f); });
-  document.getElementById('reset').onclick = call(() => { W.__ttrField.reset(); zoom.value = 0; show(1); });
-  // Keep the slider in sync when the view is changed elsewhere (double-click reset, modebar, drag-zoom).
-  setInterval(() => {
-    try {
-      if (document.activeElement === zoom) return;
-      const f = W.__ttrField.zoomLevel();
-      if (!isFinite(f) || f <= 0) return;
-      const v = Math.min(6, Math.max(0, Math.log2(f)));
-      if (Math.abs(v - parseFloat(zoom.value)) > 0.03) { zoom.value = v.toFixed(2); show(f); }
-    } catch (err) {}
-  }, 500);
+  document.getElementById('reset').onclick = call(() => W.__ttrField.reset());
 })();
 </script>
 """.replace("__PARENT_CODE__", json.dumps(FIELD_PARENT_JS))
@@ -195,8 +170,6 @@ def on_preset_change():
         st.session_state[key] = val
 
 
-KVOID_CUSTOM = len(KVOID_PRESETS)   # index of the "직접 입력" option in the k_void selectbox
-
 # Sidebar label -> VoidSpec.shape
 VOID_SHAPES = {"타원 (회전 타원체 / 링)": "ellipse", "상자 (원판 / 사각 링)": "box"}
 # Sidebar label -> Numerics.t_end_mode
@@ -208,7 +181,7 @@ def init_state():
         st.session_state.preset_idx = 2
         for key, val in preset_defaults(2).items():
             st.session_state[key] = val
-    st.session_state.setdefault("kvoid_idx", 2)
+    st.session_state.setdefault("kvoid_idx", 0)     # default: real air value 0.026 W/(m K)
     st.session_state.setdefault("result", None)
     st.session_state.setdefault("conv", None)
     st.session_state.setdefault("kv", None)
@@ -217,15 +190,15 @@ def init_state():
 def build_config() -> SimConfig:
     s = st.session_state
     p = DEPTH_PRESETS[s.preset_idx]
-    k_void = s.kvoid_custom if s.kvoid_idx == KVOID_CUSTOM else KVOID_PRESETS[s.kvoid_idx].k
+    k_void = KVOID_PRESETS[s.kvoid_idx].k
     void = VoidSpec(
-        enabled=s.void_enabled, depth=s.void_depth_um * UM, thickness=s.void_thickness_um * UM,
+        enabled=True, depth=s.void_depth_um * UM, thickness=s.void_thickness_um * UM,
         r_center=s.void_rc_um * UM, r_half=s.void_r_um * UM, k=k_void, rho_cp=AIR.rho_cp,
         shape=VOID_SHAPES.get(s.get("void_shape"), "ellipse"),
     )
     laser = Laser(
         tau_p=p.tau_p, profile=s.profile, energy=s.energy_nJ * 1e-9, w=s.spot_um * UM,
-        reflectivity=s.reflectivity, probe_w=s.probe_um * UM,
+        reflectivity=s.reflectivity, probe_w=s.probe_um * UM, c_tr=float(s.get("c_tr", -1.4e-4)),
     )
     dz = float(min(max(s.get("dz_um", p.dz * 1e6), DZ_UM_MIN), DZ_UM_MAX)) * UM
     numerics = Numerics(
@@ -265,6 +238,26 @@ def fmt_sci(x: float) -> str:
 
 # ----------------------------------------------------------------------------- sidebar
 init_state()
+# Selectboxes (control and the dropdown list, which Plotly-independent BaseWeb renders in a portal)
+# use a monospace font so the padded preset columns line up; white-space: pre keeps the padding.
+st.markdown(
+    """
+    <style>
+      div[data-testid="stSelectbox"] div[data-baseweb="select"],
+      div[data-testid="stSelectbox"] div[data-baseweb="select"] *,
+      div[data-baseweb="popover"] li[role="option"], div[data-baseweb="popover"] li[role="option"] *,
+      ul[role="listbox"] li, ul[role="listbox"] li * {
+        font-family: Consolas, "Courier New", monospace !important;
+        white-space: pre !important;
+      }
+      /* wider sidebar and dropdown so the padded preset labels are not truncated */
+      section[data-testid="stSidebar"] { width: 30rem !important; min-width: 30rem !important; }
+      section[data-testid="stSidebar"] > div { width: 30rem !important; }
+      div[data-baseweb="popover"] ul[role="listbox"] { min-width: 28rem !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 with st.sidebar:
     st.title("🔬 ns-TTR Void Simulator")
     st.caption("구리 마이크로 실린더(⌀80 μm × 500 μm, fused silica 매립) 내부 void의 펌프-프로브 thermoreflectance 검출 가능성 시뮬레이션")
@@ -281,27 +274,20 @@ with st.sidebar:
 
     st.header("2. k_void (void 열전도율)")
     st.selectbox(
-        "수치적 floor 값 — 민감도를 꼭 확인하세요", options=list(range(len(KVOID_PRESETS) + 1)),
-        format_func=lambda i: "직접 입력 (숫자)" if i == KVOID_CUSTOM else KVOID_PRESETS[i].label, key="kvoid_idx",
+        "수치적 floor 값 — 민감도를 꼭 확인하세요", options=list(range(len(KVOID_PRESETS))),
+        format_func=lambda i: KVOID_PRESETS[i].label, key="kvoid_idx",
     )
-    if st.session_state.kvoid_idx != KVOID_CUSTOM:
-        st.session_state.setdefault("kvoid_custom", 1.0)
-        kv = KVOID_PRESETS[st.session_state.kvoid_idx]
-        st.caption(kv.description)
-        if kv.warning:
-            st.warning(kv.warning)
+    kv = KVOID_PRESETS[st.session_state.kvoid_idx]
+    st.caption(kv.description)
+    if kv.warning:
+        st.warning(kv.warning)
 
     # All numeric inputs live in a form: typed values are collected when the 적용 button is
     # clicked (or Enter is pressed inside a field), so they never depend on a keypress being
     # delivered to the widget (an IME can swallow Enter) and never trigger intermediate reruns.
     with st.form("settings", border=False):
-        if st.session_state.kvoid_idx == KVOID_CUSTOM:
-            st.number_input("k_void [W/m·K] (직접 입력)", min_value=1e-4, max_value=400.0, step=0.1, key="kvoid_custom", format="%.4g",
-                            help="임의의 값을 직접 입력합니다. 실제 공기값은 0.026 W/m·K 입니다.")
-
         st.header("3. Void 형상")
         st.caption("값을 입력한 뒤 아래 **적용 (재계산)** 버튼을 누르면 반영됩니다.")
-        st.checkbox("void 포함", value=True, key="void_enabled")
         st.radio(
             "void 단면 형상", list(VOID_SHAPES.keys()), key="void_shape", horizontal=True,
             help="타원: (r, z) 단면이 타원 — 축상이면 회전 타원체, 반경 위치 > 0 이면 타원 단면의 링. "
@@ -323,7 +309,13 @@ with st.sidebar:
         c2.number_input("펌프 1/e² 반경 [μm]", min_value=1.0, max_value=40.0, value=10.0, step=1.0, key="spot_um")
         c1.number_input("프로브 1/e² 반경 [μm]", min_value=0.0, max_value=40.0, value=5.0, step=0.5, key="probe_um",
                         help="0이면 중심 셀 온도")
-        c2.number_input("구리 반사율 R", min_value=0.0, max_value=0.99, value=0.6, step=0.05, key="reflectivity")
+        c2.number_input("구리 반사율 R", min_value=0.0, max_value=0.99, value=0.6, step=0.05, key="reflectivity",
+                        help="펌프 파장에서의 반사율. 흡수 flux = I₀(1−R).")
+        st.number_input(
+            "열반사 계수 (dR/dT)/R [1/K]", min_value=-1e-2, max_value=1e-2, value=-1.4e-4, step=1e-5, key="c_tr", format="%.2e",
+            help="프로브 파장에서의 열반사 계수. ΔR/R = (dR/dT)/R × ΔT 로 신호 탭의 ΔR/R 지표에 쓰입니다. "
+                 "구리는 532 nm 근처에서 약 −1.4×10⁻⁴ /K, 파장에 따라 부호와 크기가 크게 달라지므로 사용하는 프로브 파장의 값을 넣으세요.",
+        )
 
         with st.expander("고급 수치 설정"):
             st.number_input(
@@ -356,11 +348,6 @@ with st.sidebar:
 
         submitted = st.form_submit_button("▶ 적용 (재계산)", type="primary", use_container_width=True)
 
-    if st.session_state.kvoid_idx == KVOID_CUSTOM and st.session_state.kvoid_custom > 1.0:
-        k_custom = st.session_state.kvoid_custom
-        st.warning(f"k_void = {k_custom:g} W/m·K 는 실제 공기 열전도율(0.026)의 약 {k_custom / 0.026:.0f}배입니다. "
-                   "민감도 탭에서 프리셋 값들과 비교해보세요.")
-
     cfg_preview = build_config()
     d = cfg_preview.diagnostics()
     try:
@@ -370,14 +357,13 @@ with st.sidebar:
     except ValueError as e:
         n_cells, grid_err = None, str(e)
     st.markdown("---")
-    if st.session_state.void_enabled:
-        v = cfg_preview.void
-        blocks_all = v.shape == "box" and v.r_inner == 0 and v.r_outer >= cfg_preview.geometry.R_cu * (1 - 1e-9)
-        st.caption(
-            f"void ({'타원' if v.shape == 'ellipse' else '상자'}) 범위: z = {v.depth * 1e6:.3f} ~ {v.z_bottom * 1e6:.3f} μm, "
-            f"r = {v.r_inner * 1e6:.3f} ~ {min(v.r_outer, cfg_preview.geometry.R_cu) * 1e6:.3f} μm, "
-            f"k_void = {v.k:g} W/m·K" + ("  — 단면 전체를 가로막음 (우회로 없음)" if blocks_all else "")
-        )
+    v = cfg_preview.void
+    blocks_all = v.shape == "box" and v.r_inner == 0 and v.r_outer >= cfg_preview.geometry.R_cu * (1 - 1e-9)
+    st.caption(
+        f"void ({'타원' if v.shape == 'ellipse' else '상자'}) 범위: z = {v.depth * 1e6:.3f} ~ {v.z_bottom * 1e6:.3f} μm, "
+        f"r = {v.r_inner * 1e6:.3f} ~ {min(v.r_outer, cfg_preview.geometry.R_cu) * 1e6:.3f} μm, "
+        f"k_void = {v.k:g} W/m·K" + ("  — 단면 전체를 가로막음 (우회로 없음)" if blocks_all else "")
+    )
     dz_rec_um = preset.dz * 1e6
     if abs(d["dz"] * 1e6 / dz_rec_um - 1) > 0.5:
         st.info(f"선택한 Δz = {d['dz'] * 1e6:.3f} μm 는 이 펄스폭의 권장값 {dz_rec_um:.2f} μm 와 크게 다릅니다 "
@@ -389,6 +375,49 @@ with st.sidebar:
         + f"  ·  **스텝** = {d['n_steps']:,}  ·  **셀** = {n_cells if n_cells else '—'}  \n"
         f"**관측창** = {fmt_time(d['t_end'])}  ·  **√(D·t_end)** = {fmt_length(d['L_diff'])}"
     )
+
+    # ---- peak power and an analytic estimate of the surface peak rise (linear-model validity check)
+    la_p = cfg_preview.laser
+    f_peak = 1.0 if la_p.profile == "square" else float(la_p.f(la_p.t_center))          # Gaussian peak ≈ 0.94
+    P_inc = la_p.energy / la_p.tau_p * f_peak                                             # W, incident
+    P_abs = P_inc * (1.0 - la_p.reflectivity)
+    q_abs = la_p.I0 * (1.0 - la_p.reflectivity) * f_peak
+    cu = cfg_preview.copper
+    # lower estimate: semi-infinite copper, Gaussian spot (3-D spreading);  upper estimate: add the
+    # 1-D rod term that appears once the heat is confined radially by the silica (flux spread over pi R^2)
+    dT_lo = float(center_step_response(la_p.tau_p, q_abs, la_p.w, cu))
+    q_rod = P_abs / (math.pi * cfg_preview.geometry.R_cu ** 2)
+    dT_hi = dT_lo + 2.0 * q_rod * math.sqrt(cu.alpha * la_p.tau_p / math.pi) / cu.k
+    P_fmt = lambda p: f"{p * 1e3:.3g} mW" if p < 1 else f"{p:.3g} W"                     # noqa: E731
+    st.markdown(
+        f"**피크 파워** 입사 {P_fmt(P_inc)} · 흡수 {P_fmt(P_abs)} (= 에너지 / τp{'' if f_peak == 1 else ' × 0.94'})  \n"
+        f"**예상 표면 피크 상승** ≈ {dT_lo:.3g} ~ {dT_hi:.3g} K (반무한 구리 해석해 ~ 로드 갇힘 상한)"
+    )
+    if dT_hi > 50:
+        st.error(f"예상 피크 상승 최대 {dT_hi:.3g} K: 선형 모델의 유효 범위를 넘습니다. 펄스 에너지(파워)를 줄이세요.")
+    elif dT_hi > 10:
+        st.warning(f"예상 피크 상승 최대 {dT_hi:.3g} K: 물성·흡수율의 온도 의존성으로 절대값에 수 % 오차가 생길 수 있습니다.")
+    with st.expander("유효한 피크 상승 범위"):
+        st.markdown(
+            """
+이 시뮬레이터는 **선형 모델**입니다. 구리 반사율 R, 열전도율 k, 열용량 ρc 를 초기 온도의 값으로 고정하므로
+모든 온도 상승과 ΔR/R 은 펄스 에너지에 정확히 비례합니다. 그 가정이 성립하는 범위는 표면 피크 상승으로 판단합니다.
+
+| 표면 피크 상승 | 판정 |
+|---|---|
+| 10 K 이내 | 유효. 흡수율 변화 0.2 %, 구리 물성 변화 1 % 미만으로 격자 오차보다 작습니다. |
+| 10 ~ 50 K | 주의. k 는 약 0.02 %/K 감소, ρc 는 약 0.1 %/K 증가하여 절대값에 수 % 오차. void 유/무 차이(대비)는 양쪽에 같은 오차가 들어가 영향이 작습니다. |
+| 50 K 초과 | 무효. 온도 의존 물성·흡수율을 넣은 비선형 모델이 필요합니다 (현재 미구현). |
+
+**긴 펄스에서의 주의** 펄스가 w²/(8D) ≈ 0.1 μs 보다 길면 표면 온도는 에너지가 아니라 **피크 파워**로 정해지는 정상 상태값에
+수렴합니다 (스팟 10 μm, R = 0.6 기준 입사 100 mW 당 약 4 K). 수백 μs 펄스에 실험 파워를 그대로 넣으면 이 범위를 쉽게 넘을 수 있으니,
+펄스 에너지 = 파워 × 펄스폭 으로 입력한 뒤 위의 예상값과 계산 후의 "피크 ΔT (baseline)" 지표를 확인하세요.
+위 예상 범위의 아래값은 반무한 균질 구리 해석해(3차원 확산), 위값은 여기에 실리카에 갇힌 로드의 1차원 가열 항
+2·(P_abs/πR²)·√(D·τp/π)/k 를 더한 상한입니다. 짧은 펄스에서는 두 값이 거의 같고, 수백 μs 펄스에서는 실제 피크가 그 사이(상한 쪽)에 옵니다.
+경고 판정은 상한값으로 합니다.
+            """
+        )
+
     for w in d["warnings"]:
         st.warning(w)
     if grid_err:
@@ -413,7 +442,6 @@ if apply:
         bar.empty()
 
 res = st.session_state.result
-st.title("ns-TTR Void Detection Simulator")
 if res is None:
     st.info("왼쪽 패널에서 프리셋과 void 형상을 선택한 뒤 **적용 (재계산)** 을 누르세요.")
     st.markdown(
@@ -472,6 +500,32 @@ if view == VIEWS[0]:
     if absolute:
         fig.add_hline(y=offset, line=dict(color="gray", dash="dot", width=1), annotation_text=f"초기 {offset:.2f} °C")
     st.plotly_chart(fig, use_container_width=True)
+
+    # ---- thermoreflectance signal dR/R = c_tr * dT (probe-weighted)
+    c_tr = cfg.laser.c_tr
+    SCALE = 1e4                                           # plotted in units of 1e-4
+    rr_base = c_tr * base.dT_probe * SCALE
+    figr = go.Figure()
+    figr.add_trace(go.Scatter(x=t, y=rr_base, name="baseline (void 없음)", line=dict(color="#1f77b4")))
+    if cfg.void.enabled:
+        rr_void = c_tr * void.dT_probe * SCALE
+        rr_diff = c_tr * sig["dT"] * SCALE
+        figr.add_trace(go.Scatter(x=void.times * tscale, y=rr_void, name=f"void (k_void={cfg.void.k:g})", line=dict(color="#d62728")))
+        figr.add_trace(go.Scatter(x=void.times * tscale, y=rr_diff, name="void − baseline", line=dict(color="#2ca02c", dash="dot"), yaxis="y2"))
+    pulse_shading(figr, cfg.laser, tscale)
+    figr.update_layout(
+        title=f"열반사 신호 ΔR/R  (계수 (dR/dT)/R = {c_tr:.2e} /K)", xaxis_title=f"t [{tunit}]",
+        yaxis_title="ΔR/R [×10⁻⁴]", height=420, legend=dict(orientation="h", y=-0.2),
+        yaxis2=dict(title="void − baseline [×10⁻⁴]", overlaying="y", side="right", showgrid=False),
+    )
+    st.plotly_chart(figr, use_container_width=True)
+    i_pk = int(np.argmax(np.abs(rr_base)))
+    txt = f"baseline 피크 ΔR/R = {rr_base[i_pk] / SCALE:.3e} ({rr_base[i_pk]:+.3g}×10⁻⁴)"
+    if cfg.void.enabled:
+        j_pk = int(np.argmax(np.abs(rr_diff)))
+        txt += (f"  ·  void 에 의한 변화 피크 = {rr_diff[j_pk] / SCALE:.3e} ({rr_diff[j_pk]:+.3g}×10⁻⁴) "
+                f"at t = {void.times[j_pk] * tscale:.3g} {tunit}")
+    st.caption(txt + ". 열반사 계수의 부호에 따라 신호 부호가 뒤집힐 수 있으며, 크기는 ΔT 에 비례합니다 (선형 모델).")
 
     if cfg.void.enabled:
         c1, c2 = st.columns(2)
@@ -589,13 +643,13 @@ if view == VIEWS[1]:
         )],
     )
     st.plotly_chart(fig, use_container_width=False,
-                    config={"scrollZoom": False, "displayModeBar": True, "doubleClick": "reset", "displaylogo": False})
+                    config={"scrollZoom": True, "displayModeBar": True, "doubleClick": "reset", "displaylogo": False})
     components.html(FIELD_TOOLBAR_HTML, height=46)   # snapshot / zoom buttons + arrow-key handler (see FIELD_PARENT_JS)
     thinned = f" (저장된 {len(snaps)}개 중 {len(fields)}개 표시 — 데이터 양 제한)" if len(fields) < len(snaps) else ""
     st.caption(
         f"전체 원기둥 단면 (⌀{2 * R_cu_um:.0f} μm × {L_um:.0f} μm, 실제 비율). 색 범위 0 ~ {gmax:.4g} K 는 전체 시간에 고정. "
         f"그림 아래 슬라이더, 이전/다음 버튼 또는 키보드 ←/→ 로 스냅샷을 바꾸면 브라우저 안에서 프레임만 교체됩니다 (재계산·재렌더링 없음, 확대 상태 유지){thinned}. "
-        f"확대/축소는 배율 슬라이더로, 이동은 드래그로, 전체 보기 버튼 또는 더블클릭으로 초기화합니다. 자홍색 윤곽 = void, 회색 점선 = 구리 경계."
+        f"확대/축소는 Ctrl+스크롤(일반 스크롤은 페이지 이동), 이동은 드래그, 전체 보기 버튼 또는 더블클릭으로 초기화합니다. 자홍색 윤곽 = void, 회색 점선 = 구리 경계."
     )
 
     L_end = cfg.penetration_length()
@@ -813,10 +867,7 @@ if view == VIEWS[4]:
         box = st.container()
         bar, cb = progress_ui(box)
         try:
-            ks = [p.k for p in KVOID_PRESETS]
-            if cfg.void.k not in ks:                      # custom value entered by the user
-                ks = sorted(ks + [cfg.void.k])
-            st.session_state.kv = kvoid_sensitivity(cfg, base, ks=ks, progress=cb)
+            st.session_state.kv = kvoid_sensitivity(cfg, base, progress=cb)
         except Exception as e:  # noqa: BLE001
             st.exception(e)
         finally:

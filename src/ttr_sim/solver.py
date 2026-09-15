@@ -81,6 +81,7 @@ class Laser:
     w: float = 10e-6             # 1/e^2 spot radius, m
     reflectivity: float = 0.6
     probe_w: float = 5e-6        # probe 1/e^2 radius for the thermoreflectance signal (<=0: centre cell), m
+    c_tr: float = -1.4e-4        # thermoreflectance coefficient (dR/dT)/R at the probe wavelength, 1/K (Cu, ~532 nm)
 
     @property
     def I0(self) -> float:
