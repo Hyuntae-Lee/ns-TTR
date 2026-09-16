@@ -17,9 +17,13 @@ from scipy.interpolate import RegularGridInterpolator
 
 from ttr_sim import DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec
 from ttr_sim.analytic import center_step_response
-from ttr_sim.materials import AIR, COPPER, COPPER_ABSORPTION_DEPTH, FUSED_SILICA
+from ttr_sim.materials import (
+    AIR, COPPER, COPPER_ABSORPTION_DEPTH, COPPER_C_TR_PROBE, COPPER_REFLECTIVITY_DEFAULT, FUSED_SILICA,
+    PROBE_WAVELENGTH_NM, PUMP_WAVELENGTH_NM,
+)
 from ttr_sim.presets import fmt_length, fmt_time
 from ttr_sim.solver import MAT_VOID, build_grid, material_map
+from ttr_sim.solver3d import theta_faces
 from ttr_sim.validation import analytic_comparison, grid_convergence, kvoid_sensitivity, run_pair
 
 st.set_page_config(page_title="Nanosecond Transient Thermoreflectance Simulator", page_icon="🔬", layout="wide",
@@ -158,11 +162,7 @@ def preset_defaults(idx: int) -> dict:
         void_thickness_um=max(round(0.5 * d_um, 3), round(2 * p.dz * 1e6, 3)),
         void_r_um=min(round(2 * d_um, 3), 40.0),
         energy_nJ=default_energy_nJ(p.tau_p),
-        dz_um=round(p.dz * 1e6, 3),          # recommended grid spacing for this pulse width (editable)
     )
-
-
-DZ_UM_MIN, DZ_UM_MAX = 0.14, 56.57          # allowed grid spacing range (spec table extremes)
 
 
 def on_preset_change():
@@ -196,15 +196,14 @@ def build_config() -> SimConfig:
         shape="ellipse",                                  # fixed: spheroidal void (bubble-like)
     )
     laser = Laser(
-        tau_p=p.tau_p, profile=s.profile, energy=s.energy_nJ * 1e-9, w=s.spot_um * UM,
-        reflectivity=s.reflectivity, probe_w=s.probe_um * UM, c_tr=float(s.get("c_tr", -1.4e-4)),
+        tau_p=p.tau_p, profile="gaussian", energy=s.energy_nJ * 1e-9, w=s.spot_um * UM,
+        reflectivity=s.reflectivity, probe_w=s.probe_um * UM, c_tr=float(s.get("c_tr", COPPER_C_TR_PROBE)),
     )
-    dz = float(min(max(s.get("dz_um", p.dz * 1e6), DZ_UM_MIN), DZ_UM_MAX)) * UM
     numerics = Numerics(
-        dz=dz, fo=s.fo, t_end_factor=float(s.get("t_end_factor", 5.0)),
+        dz=p.dz,                                              # surface-layer spacing sqrt(D tau_p)/10 from the preset
+        fo=s.fo, t_end_factor=float(s.get("t_end_factor", 5.0)),
         t_end_mode=T_END_MODES.get(s.get("t_end_mode"), "tau_p"), t_end_abs=float(s.get("t_end_abs_us", 10.0)) * 1e-6,
         dt_growth=float(s.get("dt_growth", 1.05)), stretch=s.stretch, n_snapshots=int(s.get("n_snapshots", 12)),
-        n_theta=int(s.get("n_theta", 16)),
     )
     geometry = Geometry(homogeneous_copper=s.homogeneous)
     return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics)
@@ -302,28 +301,27 @@ with st.sidebar:
         c2.number_input("반경 반폭 [μm]", min_value=0.001, max_value=40.0, step=0.01, key="void_r_um", format="%.3f")
 
         st.header("4. 레이저")
-        st.radio("펄스 시간 프로파일", ["square", "gaussian"], key="profile", horizontal=True,
-                 help="square: 폭 τp의 사각 펄스, gaussian: FWHM = τp (동일 fluence로 정규화)")
+        st.markdown(
+            f"펌프: **{PUMP_WAVELENGTH_NM:g} nm** 펄스, Gaussian (FWHM = τp)  ·  프로브: **{PROBE_WAVELENGTH_NM:g} nm** CW"
+        )
         c1, c2 = st.columns(2)
         c1.number_input("펄스 에너지 [nJ]", min_value=1e-3, max_value=1e7, key="energy_nJ", format="%.4g")
         c2.number_input("펌프 1/e² 반경 [μm]", min_value=1.0, max_value=40.0, value=10.0, step=1.0, key="spot_um")
         c1.number_input("프로브 1/e² 반경 [μm]", min_value=0.0, max_value=40.0, value=5.0, step=0.5, key="probe_um",
                         help="0이면 중심 셀 온도")
-        c2.number_input("구리 반사율 R", min_value=0.0, max_value=0.99, value=0.6, step=0.05, key="reflectivity",
-                        help="펌프 파장에서의 반사율. 흡수 flux = I₀(1−R).")
+        c2.number_input(f"구리 반사율 R (펌프 {PUMP_WAVELENGTH_NM:g} nm)", min_value=0.0, max_value=0.99,
+                        value=COPPER_REFLECTIVITY_DEFAULT, step=0.05, key="reflectivity",
+                        help=f"펌프 {PUMP_WAVELENGTH_NM:g} nm 에서의 구리 반사율 (깨끗한 표면 약 0.6). 흡수 flux = I₀(1−R). "
+                             f"광학 흡수깊이 {COPPER_ABSORPTION_DEPTH * 1e9:.0f} nm 도 이 파장 기준입니다.")
         st.number_input(
-            "열반사 계수 (dR/dT)/R [1/K]", min_value=-1e-2, max_value=1e-2, value=-1.4e-4, step=1e-5, key="c_tr", format="%.2e",
-            help="프로브 파장에서의 열반사 계수. ΔR/R = (dR/dT)/R × ΔT 로 신호 탭의 ΔR/R 지표에 쓰입니다. "
-                 "구리는 532 nm 근처에서 약 −1.4×10⁻⁴ /K, 파장에 따라 부호와 크기가 크게 달라지므로 사용하는 프로브 파장의 값을 넣으세요.",
+            f"열반사 계수 (dR/dT)/R [1/K] (프로브 {PROBE_WAVELENGTH_NM:g} nm)", min_value=-1e-2, max_value=1e-2,
+            value=COPPER_C_TR_PROBE, step=1e-5, key="c_tr", format="%.2e",
+            help=f"프로브 {PROBE_WAVELENGTH_NM:g} nm 에서 구리의 열반사 계수. ΔR/R = (dR/dT)/R × ΔT 로 신호 탭의 ΔR/R 지표에만 쓰입니다 "
+                 "(열 계산에는 영향 없음). 구리는 630 nm 근처에서 약 −1 ~ −2 ×10⁻⁴ /K 로 보고되며 표면 상태에 따라 수십 % 달라지므로, "
+                 "절대값이 중요하면 기준 시료로 보정한 값을 넣으세요.",
         )
 
         with st.expander("고급 수치 설정"):
-            st.number_input(
-                f"격자 간격 Δz [μm] ({DZ_UM_MIN} ~ {DZ_UM_MAX})", min_value=DZ_UM_MIN, max_value=DZ_UM_MAX, step=0.01,
-                key="dz_um", format="%.3f",
-                help="관심 영역(표면~void)의 축 방향 격자 간격. 프리셋을 바꾸면 권장값 √(D·τp)/10 이 다시 채워지며, 여기서 자유롭게 바꿀 수 있습니다. "
-                     "Δt 는 Fo 와 이 값으로 정해집니다 (Δt = Fo·Δz²/D).",
-            )
             st.select_slider("Fourier 수 Fo = D·Δt/Δz² (Δt 결정)", options=[0.125, 0.25, 0.5, 1.0, 2.0], value=0.5, key="fo",
                              help="Crank–Nicolson은 무조건 안정이지만 Fo가 크면 급격한 transient에서 진동/정확도 저하가 생길 수 있습니다.")
             st.radio(
@@ -339,9 +337,6 @@ with st.sidebar:
                 help="펄스가 끝난 뒤 시간 간격을 스텝마다 이 비율로 키웁니다 (8스텝 블록 단위로 적용, 블록마다 행렬 재분해). "
                      "1.00 이면 Δt 고정. 1.05 면 Δt ≈ 0.05·t 로 상대 시간 해상도가 일정하게 유지되며, 긴 관측창도 수백 스텝이면 충분합니다.",
             )
-            st.slider("3D 방위각 셀 수 nθ (반원 기준)", min_value=6, max_value=48, value=16, step=2, key="n_theta",
-                      help="void 가 축에서 벗어난 경우에만 3차원(r, θ, z) 계산을 합니다. θ 방향 대칭을 이용해 반원(0~π)만 풀며, "
-                           "이 값은 그 반원을 나누는 셀 수입니다. 미지수 = (r, z) 셀 수 × nθ 이므로 계산 시간이 비례해 늘어납니다.")
             st.slider("격자 성장률 (관심 영역 밖)", min_value=1.02, max_value=1.5, value=1.15, step=0.01, key="stretch",
                       help="표면층과 void 주변은 Δz 로 균일하고, 그 사이·아래·실리카는 셀마다 이 비율로 커집니다. 1.02 면 거의 균일 격자.")
             st.slider("온도장 스냅샷 개수", min_value=12, max_value=100, value=12, step=1, key="n_snapshots",
@@ -367,12 +362,9 @@ with st.sidebar:
         f"r = {v.r_inner * 1e6:.3f} ~ {min(v.r_outer, cfg_preview.geometry.R_cu) * 1e6:.3f} μm, "
         f"k_void = {v.k:g} W/m·K" + ("  — 단면 전체를 가로막음 (우회로 없음)" if blocks_all else "")
     )
-    dz_rec_um = preset.dz * 1e6
-    if abs(d["dz"] * 1e6 / dz_rec_um - 1) > 0.5:
-        st.info(f"선택한 Δz = {d['dz'] * 1e6:.3f} μm 는 이 펄스폭의 권장값 {dz_rec_um:.2f} μm 와 크게 다릅니다 "
-                f"(권장: 열 침투 길이 √(D·τp) 를 10등분). 격자가 너무 거칠면 void 신호 해상이 부족하고, 너무 조밀하면 계산량이 급증합니다.")
     st.markdown(
-        f"**τp** = {fmt_time(d['tau_p'])}  ·  **Δz** = {fmt_length(d['dz'])} (권장 {dz_rec_um:.2f} μm)  ·  **Δr** = {fmt_length(d['dr'])}  \n"
+        f"**τp** = {fmt_time(d['tau_p'])}  ·  **격자** 표면층 Δz = {fmt_length(d['dz'])}, Δr = {fmt_length(d['dr'])}; "
+        f"void 주변 Δz = {fmt_length(d['dz_void'])}, Δr = {fmt_length(d['dr_void'])} (void 치수의 1/{d['void_cells']})  \n"
         f"**Δt** = {fmt_time(d['dt'])} (Fo={d['fo']:g})"
         + (f" → 최대 {fmt_time(d['dt_max'])} (성장률 {d['dt_growth']:.2f})" if d['dt_growth'] > 1 and np.isfinite(d['dt_max']) else "")
         + f"  ·  **스텝** = {d['n_steps']:,}  ·  **셀** = {n_cells if n_cells else '—'}  \n"
@@ -380,11 +372,12 @@ with st.sidebar:
     )
 
     if cfg_preview.void.r_center > 0 and n_cells:
-        n_unknowns = n_cells * int(st.session_state.get("n_theta", 16))
+        n_th = len(theta_faces(cfg_preview)) - 1
+        n_unknowns = n_cells * n_th
         st.info(
-            f"축에서 벗어난 void → void 케이스는 3차원 (r, θ, z) 계산: nθ = {st.session_state.get('n_theta', 16)} (반원), "
+            f"축에서 벗어난 void → void 케이스는 3차원 (r, θ, z) 계산: 방위각 셀 {n_th}개 (반원, void 각폭을 {cfg_preview.numerics.void_cells}등분), "
             f"미지수 ≈ {n_unknowns:,} ({'직접 LU' if n_unknowns <= 60_000 else 'ILU + 반복법'}). "
-            f"baseline 은 축대칭 2D. 계산 시간은 2D 대비 대략 nθ 배 이상 걸립니다."
+            f"baseline 은 축대칭 2D. 계산 시간은 2D 보다 수십~수백 배 걸릴 수 있습니다."
         )
 
     # ---- peak power and an analytic estimate of the surface peak rise (linear-model validity check)
@@ -525,7 +518,7 @@ if view == VIEWS[0]:
         figr.add_trace(go.Scatter(x=void.times * tscale, y=rr_diff, name="void − baseline", line=dict(color="#2ca02c", dash="dot"), yaxis="y2"))
     pulse_shading(figr, cfg.laser, tscale)
     figr.update_layout(
-        title=f"열반사 신호 ΔR/R  (계수 (dR/dT)/R = {c_tr:.2e} /K)", xaxis_title=f"t [{tunit}]",
+        title=f"열반사 신호 ΔR/R  (프로브 {PROBE_WAVELENGTH_NM:g} nm, (dR/dT)/R = {c_tr:.2e} /K)", xaxis_title=f"t [{tunit}]",
         yaxis_title="ΔR/R [×10⁻⁴]", height=420, legend=dict(orientation="h", y=-0.2),
         yaxis2=dict(title="void − baseline [×10⁻⁴]", overlaying="y", side="right", showgrid=False),
     )

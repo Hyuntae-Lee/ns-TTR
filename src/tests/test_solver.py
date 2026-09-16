@@ -110,23 +110,42 @@ def test_void_based_window_and_short_pulse_deep_void():
 
 
 # ----------------------------------------------------------------------------- 3-D (off-axis void)
-def _cfg3d(r_center_um, n_theta=6, shape="ellipse"):
+def _cfg3d(r_center_um, void_cells=4, shape="ellipse"):
     p = DEPTH_PRESETS[4]   # 6.9 us pulse, dz 2.8 um -> small (r, z) grid
     return SimConfig(
         geometry=Geometry(),
         void=VoidSpec(enabled=True, depth=20e-6, thickness=10e-6, r_center=r_center_um * 1e-6, r_half=8e-6, k=0.026, shape=shape),
         laser=Laser(tau_p=p.tau_p, energy=100e-9, w=10e-6, probe_w=5e-6),
-        numerics=Numerics(dz=p.dz, n_snapshots=4, n_theta=n_theta),
+        numerics=Numerics(dz=p.dz, n_snapshots=4, void_cells=void_cells),
     )
+
+
+def test_grid_zones_resolve_void_automatically():
+    """Surface layer from tau_p, void zone from the void size: a thin deep void gets >= void_cells cells."""
+    p = DEPTH_PRESETS[7]   # 690 us pulse, dz 28 um
+    cfg = SimConfig(Geometry(), VoidSpec(enabled=True, depth=200e-6, thickness=2e-6, r_half=3e-6, k=0.026),
+                    Laser(tau_p=p.tau_p), Numerics(dz=p.dz, void_cells=8))
+    g = build_grid(cfg)
+    assert cfg.dz_void == pytest.approx(2e-6 / 8) and cfg.dr_void == pytest.approx(3e-6 / 8)
+    in_void_z = (g.z_c > cfg.void.depth) & (g.z_c < cfg.void.z_bottom)
+    in_void_r = g.r_c < cfg.void.r_half
+    assert in_void_z.sum() >= 8 and in_void_r.sum() >= 8
+    assert np.any(np.isclose(g.z_faces, cfg.void.depth)) and np.any(np.isclose(g.z_faces, cfg.void.z_bottom))
+    assert np.any(np.isclose(g.r_faces, cfg.void.r_half)) and np.any(np.isclose(g.r_faces, cfg.geometry.R_cu))
+    assert np.all(np.diff(g.z_faces) > 0) and np.all(np.diff(g.r_faces) > 0)
+    assert g.n_cells < 60_000                                     # zoning keeps the grid small
+    assert g.z_faces[-1] == pytest.approx(cfg.geometry.L)
 
 
 def test_3d_reproduces_2d_for_on_axis_void():
     """Forced 3-D run of an axisymmetric case must equal the 2-D solver (same (r, z) grid, direct solves)."""
-    from ttr_sim.solver3d import run_simulation_3d
+    from ttr_sim.solver3d import run_simulation_3d, theta_faces
     cfg = _cfg3d(0.0)
+    th = theta_faces(cfg)
+    assert th[0] == 0.0 and th[-1] == pytest.approx(math.pi) and np.all(np.diff(th) > 0)
     r2 = run_simulation(cfg)
     r3 = run_simulation_3d(cfg)
-    assert r3.is_3d and r3.n_theta == 6
+    assert r3.is_3d and r3.n_theta == len(th) - 1
     assert np.allclose(r3.T_probe, r2.T_probe, rtol=1e-7, atol=1e-9)
     assert np.allclose(r3.T_axis, r2.T_axis, rtol=1e-7, atol=1e-9)
     assert abs(r3.energy_error) < 1e-9
@@ -153,12 +172,13 @@ def test_off_axis_void_dispatch_and_signal():
 
 def test_3d_void_volume():
     """Staircase spheroid volume on the 3-D grid is close to 4/3 pi a^2 c (both halves)."""
-    from ttr_sim.solver3d import material_map_3d
-    cfg = _cfg3d(15.0, n_theta=24)
+    from ttr_sim.solver3d import material_map_3d, theta_faces
+    cfg = _cfg3d(15.0, void_cells=8)
     g = build_grid(cfg)
-    mat = material_map_3d(cfg, g, 24)
-    dth = math.pi / 24
-    V = (0.5 * dth * (g.r_faces[1:] ** 2 - g.r_faces[:-1] ** 2))[None, :, None] * g.dz_c[:, None, None]
+    th = theta_faces(cfg)
+    mat = material_map_3d(cfg, g, th)
+    dth = np.diff(th)
+    V = 0.5 * (g.r_faces[1:] ** 2 - g.r_faces[:-1] ** 2)[None, :, None] * dth[None, None, :] * g.dz_c[:, None, None]
     vol = 2.0 * float((np.broadcast_to(V, mat.shape) * (mat == MAT_VOID)).sum())
     v = cfg.void
     assert vol == pytest.approx(4.0 / 3.0 * math.pi * v.r_half ** 2 * 0.5 * v.thickness, rel=0.2)

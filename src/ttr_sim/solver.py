@@ -81,7 +81,7 @@ class Laser:
     w: float = 10e-6             # 1/e^2 spot radius, m
     reflectivity: float = 0.6
     probe_w: float = 5e-6        # probe 1/e^2 radius for the thermoreflectance signal (<=0: centre cell), m
-    c_tr: float = -1.4e-4        # thermoreflectance coefficient (dR/dT)/R at the probe wavelength, 1/K (Cu, ~532 nm)
+    c_tr: float = -1.5e-4        # thermoreflectance coefficient (dR/dT)/R at the 632.8 nm probe, 1/K (see materials.COPPER_C_TR_PROBE)
 
     @property
     def I0(self) -> float:
@@ -143,7 +143,8 @@ class Numerics:
     stretch: float = 1.15        # geometric growth ratio of the grid outside the fine regions
     T0: float = 293.15           # initial / ambient temperature, K
     n_snapshots: int = 12        # number of stored full-field snapshots
-    n_theta: int = 16            # azimuthal cells on the half cylinder (3-D runs for off-axis voids only)
+    void_cells: int = 8          # minimum cells across the void thickness, radial half-width and angular width
+    theta_max: float = math.pi / 12   # coarsest azimuthal spacing away from the void (3-D runs)
     max_cells: int = 600_000
     max_steps: int = 400_000
 
@@ -160,13 +161,23 @@ class SimConfig:
     # -- derived quantities used by both the solver and the GUI
     @property
     def dr(self) -> float:
-        n, g, v = self.numerics, self.geometry, self.void
+        """Radial spacing of the spot zone (resolves the Gaussian beam and the rod radius)."""
+        n, g = self.numerics, self.geometry
         if n.dr is not None:
             return n.dr
-        dr = min(n.dz, self.laser.w / 5.0, g.R_cu / 10.0)
-        if v.enabled and v.r_half > 0:
-            dr = min(dr, max(v.r_half / 3.0, n.dz / 4.0))
-        return dr
+        return min(n.dz, self.laser.w / 5.0, g.R_cu / 10.0)
+
+    @property
+    def dz_void(self) -> float:
+        """Axial spacing in the void zone: at least `void_cells` cells across the void thickness."""
+        v, n = self.void, self.numerics
+        return min(n.dz, v.thickness / n.void_cells) if v.enabled else n.dz
+
+    @property
+    def dr_void(self) -> float:
+        """Radial spacing in the void zone: at least `void_cells` cells across the radial half-width."""
+        v, n = self.void, self.numerics
+        return min(self.dr, v.r_half / n.void_cells) if v.enabled else self.dr
 
     @property
     def dt(self) -> float:
@@ -255,8 +266,6 @@ class SimConfig:
             warnings.append("void 하단이 로드 후면(z=L)을 넘습니다. void가 잘립니다.")
         if self.void.enabled and self.void.r_outer > g.R_cu:
             warnings.append("void 반경 범위가 구리 반경(40 μm)을 넘습니다. void가 구리 내부로 잘립니다.")
-        if self.void.enabled and self.void.thickness < 2 * n.dz:
-            warnings.append(f"void 두께({self.void.thickness * 1e6:.2f} μm)가 격자 Δz의 2배보다 작아 해상이 부족합니다.")
         interface_reached = L_diff > (g.R_cu - la.w)
         try:
             tg = self.time_grid()
@@ -265,7 +274,8 @@ class SimConfig:
             warnings.append(str(e))
             n_steps, dt_max = n.max_steps, float("nan")
         return dict(
-            dz=n.dz, dr=self.dr, dt=self.dt, dt_max=dt_max, dt_growth=n.dt_growth, fo=n.fo, tau_p=la.tau_p,
+            dz=n.dz, dr=self.dr, dz_void=self.dz_void, dr_void=self.dr_void, void_cells=n.void_cells,
+            dt=self.dt, dt_max=dt_max, dt_growth=n.dt_growth, fo=n.fo, tau_p=la.tau_p,
             t_end=self.t_end, t_end_mode=n.t_end_mode,
             n_steps=n_steps, L_diff=L_diff, L_diff_silica=L_diff_si, flux_ratio=flux_ratio,
             interface_reached=interface_reached, warnings=warnings, I0=la.I0,
@@ -400,62 +410,95 @@ def _graded_faces(a: float, b: float, d_start: float, d_end: float, ratio: float
     return faces
 
 
+def _insert_zone(zones: list, new: tuple) -> list:
+    """Insert (start, end, spacing, breakpoints) into a sorted, non-overlapping zone list; the new zone
+    wins where it overlaps existing zones (their overlapping parts are cut away)."""
+    a, b = new[0], new[1]
+    out = []
+    for (s, e, sp, bp) in zones:
+        if e <= a or s >= b:
+            out.append((s, e, sp, bp))
+            continue
+        if s < a:
+            out.append((s, a, sp, [p for p in bp if p < a]))
+        if e > b:
+            out.append((b, e, sp, [p for p in bp if p > b]))
+    out.append(new)
+    return sorted(out, key=lambda z: z[0])
+
+
+def _zoned_axis(zones: list, total_end: float, ratio: float) -> np.ndarray:
+    """Faces on [0, total_end] from uniform zones (start, end, spacing, breakpoints).
+
+    Gaps between zones are filled with geometrically graded cells that grow away from both
+    neighbouring zones; where two zones touch with different spacings a short graded transition is
+    carved out of the coarser one; beyond the last zone the spacing is stretched to total_end.
+    """
+    zones = [(max(0.0, s), min(total_end, e), sp, bp) for (s, e, sp, bp) in zones]
+    zones = sorted([z for z in zones if z[1] - z[0] > 1e-15], key=lambda z: z[0])
+    # carve transitions at touching boundaries with a spacing jump
+    adj = []
+    for i, (s, e, sp, bp) in enumerate(zones):
+        s2, e2 = s, e
+        if i > 0 and abs(zones[i - 1][1] - s) < 1e-15 and sp > 1.5 * zones[i - 1][2]:
+            s2 = min(e - sp, s + (sp - zones[i - 1][2]) / (ratio - 1.0))          # coarser zone after a finer one
+        if i + 1 < len(zones) and abs(zones[i + 1][0] - e) < 1e-15 and sp > 1.5 * zones[i + 1][2]:
+            e2 = max(s2 + sp, e - (sp - zones[i + 1][2]) / (ratio - 1.0))        # coarser zone before a finer one
+        if e2 - s2 > 1e-15:
+            adj.append((s2, e2, sp, [p for p in bp if s2 < p < e2]))
+    zones = adj
+    faces = [np.array([0.0])]
+    pos, prev_sp = 0.0, zones[0][2]
+    for (s, e, sp, bp) in zones:
+        if s > pos + 1e-15:
+            faces.append(_graded_faces(pos, s, prev_sp, sp, ratio))
+        faces.append(_segmented(s, bp, e, sp)[1:])
+        pos, prev_sp = e, sp
+    if pos < total_end - 1e-15:
+        faces.append(_stretched_faces(pos, total_end, prev_sp, ratio))
+    f = np.concatenate(faces)
+    f[-1] = total_end
+    return f
+
+
 def build_grid(cfg: SimConfig) -> Grid:
-    """Axial grid: a uniform surface layer (dz) resolving the pulse deposition, a uniform zone around the
-    void (dz), a geometrically graded bridge between them and a stretched tail down to z = L.  The
-    temperature field smooths as sqrt(D t) away from the surface, so cells growing roughly in
-    proportion to depth lose no accuracy while keeping the cell count small even for a short pulse
-    (fine dz) combined with a deep void."""
+    """(r, z) grid built from physics-derived zones, no user tuning:
+
+    * axial surface layer  : >= 10 pulse penetration lengths at dz = sqrt(D tau_p)/10 (preset), with the
+                             first ~2w refined to the radial spacing when the spot is finer than dz;
+    * axial void zone      : void thickness resolved by >= void_cells cells (dz_void), faces on the void
+                             top/bottom, margin around it;
+    * radial spot zone     : 0..2w at dr = min(dz, w/5, R/10);
+    * radial void zone     : void radial extent resolved by >= void_cells cells (dr_void), faces on its edges;
+    * everything else      : geometrically graded bridges / stretched tails (ratio `stretch`).
+    The temperature field smooths as sqrt(D t) away from the surface, so cells growing roughly in
+    proportion to distance lose no accuracy while keeping the cell count small."""
     g, v, la, n = cfg.geometry, cfg.void, cfg.laser, cfg.numerics
     dz, dr = n.dz, cfg.dr
+    dz_v, dr_v = cfg.dz_void, cfg.dr_void
 
-    # ---- surface layer: >= 10 pulse penetration lengths, >= 5 cells, plus the 2w spot layer if refined
-    dz_surf = dr if dr < dz else None           # radial spacing finer than dz -> refine the first ~2w in z too
-    z_s = max(10.0 * math.sqrt(cfg.copper.alpha * la.tau_p), 5.0 * dz)
-    if dz_surf is not None:
-        z_s = max(z_s, 2.0 * la.w)
-    z_s = min(z_s, g.L)
-    bps = [min(2.0 * la.w, z_s)] if dz_surf is not None else []
-
-    # ---- void zone: uniform dz from (depth - margin) to (bottom + margin), faces on the void boundaries
+    # ---- axial zones
+    z_s = min(g.L, max(10.0 * math.sqrt(cfg.copper.alpha * la.tau_p), 5.0 * dz))
+    if dr < dz:
+        z_layer = min(2.0 * la.w, z_s)
+        zones_z = [(0.0, z_layer, dr, []), (z_layer, z_s, dz, [])]
+    else:
+        zones_z = [(0.0, z_s, dz, [])]
     if v.enabled and v.depth < g.L:
-        margin = min(v.thickness, 5.0 * dz)
-        zv0, zv1 = max(0.0, v.depth - margin), min(g.L, v.z_bottom + margin)
-    else:
-        zv0, zv1 = None, None
+        m = min(v.thickness, 5.0 * dz_v)
+        zones_z = _insert_zone(zones_z, (max(0.0, v.depth - m), min(g.L, v.z_bottom + m), dz_v, [v.depth, v.z_bottom]))
+    z_faces = _zoned_axis(zones_z, g.L, n.stretch)
 
-    if zv0 is not None and zv0 <= z_s + 2.0 * dz:
-        # shallow void: one uniform region from the surface to below the void
-        z_uni = max(z_s, zv1)
-        if g.L - z_uni < 2 * dz:
-            z_uni = g.L
-        z_faces = _segmented(0.0, bps + [v.depth, v.z_bottom], z_uni, dz, d_start=dz_surf, ratio=n.stretch)
-    else:
-        if zv0 is None and g.L - z_s < 2 * dz:
-            z_s = g.L
-        z_faces = _segmented(0.0, bps, z_s, dz, d_start=dz_surf, ratio=n.stretch)
-        if zv0 is not None:
-            # graded bridge, then the uniform void zone
-            z_faces = np.concatenate([z_faces, _graded_faces(z_s, zv0, dz, dz, n.stretch)])
-            z_faces = np.concatenate([z_faces, _segmented(zv0, [v.depth, v.z_bottom], zv1, dz)[1:]])
-            z_uni = zv1
-        else:
-            z_uni = z_s
-    if z_uni < g.L:
-        z_faces = np.concatenate([z_faces, _stretched_faces(z_uni, g.L, dz, n.stretch)])
+    # ---- radial zones inside the copper
+    r_s = min(g.R_cu, 2.0 * la.w)
+    zones_r = [(0.0, r_s, dr, [])]
+    if v.enabled:
+        m = min(v.r_half, 5.0 * dr_v)
+        bp = [p for p in (v.r_inner, v.r_outer) if 0.0 < p < g.R_cu]
+        zones_r = _insert_zone(zones_r, (max(0.0, v.r_inner - m), min(g.R_cu, v.r_outer + m), dr_v, bp))
+    r_faces = _zoned_axis(zones_r, g.R_cu, n.stretch)
 
-    # ---- radial: fine uniform region (spot + void), stretched to R_cu, then silica shell
-    r_fine = 2.0 * la.w
-    if v.enabled and v.r_outer < g.R_cu * (1 - 1e-9):
-        # resolve the void's radial edge; a void reaching the copper boundary needs no extra radial refinement
-        r_fine = max(r_fine, v.r_outer + 5.0 * dr)
-    r_fine = min(r_fine, g.R_cu)
-    if g.R_cu - r_fine < 2 * dr:
-        r_fine = g.R_cu
-    bps = [v.r_inner, v.r_outer] if v.enabled else []
-    r_faces = _segmented(0.0, bps, r_fine, dr)
-    if r_fine < g.R_cu:
-        r_faces = np.concatenate([r_faces, _stretched_faces(r_fine, g.R_cu, dr, n.stretch)])
+    # ---- silica shell (or copper in the homogeneous validation mode)
     outer = cfg.copper if g.homogeneous_copper else cfg.silica
     L_out = math.sqrt(outer.alpha * cfg.t_end)
     r_max = g.R_cu + max(2.0 * g.R_cu, 4.0 * L_out)
@@ -699,9 +742,11 @@ def baseline_config(cfg: SimConfig) -> SimConfig:
 
 
 def refined_config(cfg: SimConfig, factor: float) -> SimConfig:
-    """Spatially refined configuration (dz, dr divided by `factor`; dt follows via the fixed Fo)."""
+    """Spatially refined configuration: dz, dr divided by `factor`, void resolution multiplied by it
+    (dt follows via the fixed Fo)."""
     n = cfg.numerics
-    return replace(cfg, numerics=replace(n, dz=n.dz / factor, dr=cfg.dr / factor))
+    return replace(cfg, numerics=replace(n, dz=n.dz / factor, dr=cfg.dr / factor,
+                                         void_cells=max(1, int(round(n.void_cells * factor)))))
 
 
 def void_signal(base: SimResult, void: SimResult) -> dict:

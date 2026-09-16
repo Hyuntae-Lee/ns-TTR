@@ -7,6 +7,11 @@ theta = pi).  The (r, z) grid is the same one the axisymmetric solver uses, so a
 field on this grid reproduces the 2-D result exactly: the no-void baseline can stay 2-D and the
 void signal (3-D void run minus 2-D baseline) is consistent.
 
+Azimuthal grid: automatic.  The angular width of the void seen from the axis is resolved by at
+least `void_cells` cells (uniform zone around theta = 0), then the spacing grows geometrically up to
+`theta_max` towards theta = pi.  Non-uniform theta spacings are handled exactly by the finite-volume
+link areas and centre distances.
+
 Cells: p = (j * nr + i) * nth + m  with i radial, j axial, m azimuthal.  The innermost cells are
 wedges that touch the axis; they need no special treatment because their radial inner face has
 zero area and their azimuthal faces are handled like any other.
@@ -27,7 +32,8 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 from .solver import (
-    MAT_COPPER, MAT_SILICA, MAT_VOID, SimConfig, SimResult, build_grid, gaussian_annulus_weights,
+    MAT_COPPER, MAT_SILICA, MAT_VOID, SimConfig, SimResult, _transition_faces, build_grid,
+    gaussian_annulus_weights,
 )
 
 DIRECT_MAX_UNKNOWNS = 60_000
@@ -38,9 +44,34 @@ def needs_3d(cfg: SimConfig) -> bool:
     return cfg.void.enabled and cfg.void.r_center > 0.0
 
 
-def material_map_3d(cfg: SimConfig, grid, nth: int) -> np.ndarray:
+def void_angular_halfwidth(cfg: SimConfig) -> float:
+    """Half of the angle subtended by the void about the axis (pi/2 if it contains the axis)."""
+    v = cfg.void
+    if v.r_center <= v.r_half:
+        return math.pi / 2
+    return math.asin(v.r_half / v.r_center)
+
+
+def theta_faces(cfg: SimConfig) -> np.ndarray:
+    """Azimuthal faces on [0, pi]: uniform fine zone over the void's angular extent (>= void_cells cells
+    across the full width, plus a margin), then geometric growth up to theta_max."""
+    n = cfg.numerics
+    half = void_angular_halfwidth(cfg)
+    d_fine = min(2.0 * half / n.void_cells, n.theta_max)
+    margin = min(half, 5.0 * d_fine)
+    th_zone = min(math.pi, half + margin)
+    n_zone = max(1, int(round(th_zone / d_fine)))
+    faces = np.linspace(0.0, th_zone, n_zone + 1)
+    if th_zone < math.pi - 1e-12:
+        faces = np.concatenate([faces, _transition_faces(th_zone, math.pi, d_fine, n.theta_max, n.stretch)])
+    faces[-1] = math.pi
+    return faces
+
+
+def material_map_3d(cfg: SimConfig, grid, th_faces: np.ndarray) -> np.ndarray:
     """Material id per cell, shape (nz, nr, nth), for the half cylinder 0 <= theta <= pi."""
-    th_c = (np.arange(nth) + 0.5) * math.pi / nth
+    th_c = 0.5 * (th_faces[1:] + th_faces[:-1])
+    nth = len(th_c)
     rc, zc = grid.r_c, grid.z_c
     mat = np.full((grid.nz, grid.nr, nth), MAT_COPPER, dtype=np.int8)
     if not cfg.geometry.homogeneous_copper:
@@ -52,10 +83,8 @@ def material_map_3d(cfg: SimConfig, grid, nth: int) -> np.ndarray:
         Z = zc[:, None, None]
         rho2 = (X - v.r_center) ** 2 + Y ** 2                        # squared distance from the void axis
         if v.shape == "ellipse":
-            # spheroid: horizontal semi-axes r_half, vertical semi-axis thickness/2
             inside = rho2 / v.r_half ** 2 + ((Z - v.z_center) / (0.5 * v.thickness)) ** 2 < 1.0
         else:
-            # short cylinder (disk) of radius r_half and height thickness
             inside = (rho2 < v.r_half ** 2) & (Z >= v.depth) & (Z < v.z_bottom)
         inside = inside & (rc[None, :, None] < cfg.geometry.R_cu)
         mat[np.broadcast_to(inside, mat.shape)] = MAT_VOID
@@ -76,29 +105,30 @@ def _properties(cfg: SimConfig, mat: np.ndarray):
     return k, rho_cp
 
 
-def assemble_laplacian_3d(grid, k3: np.ndarray, nth: int) -> sp.csr_matrix:
+def assemble_laplacian_3d(grid, k3: np.ndarray, th_faces: np.ndarray) -> sp.csr_matrix:
     """Conductance Laplacian (W/K) on the half cylinder; zero-flux at theta = 0 and theta = pi."""
     nr, nz = grid.nr, grid.nz
     rf, zf, rc, zc = grid.r_faces, grid.z_faces, grid.r_c, grid.z_c
     dzc, drc = grid.dz_c, grid.dr_c
-    dth = math.pi / nth
+    dth = np.diff(th_faces)                                  # (nth,)
+    nth = len(dth)
     idx = np.arange(nz * nr * nth).reshape(nz, nr, nth)
 
-    # radial links (i, i+1)
-    A_r = (rf[1:-1] * dth)[None, :, None] * dzc[:, None, None]
+    # radial links (i, i+1): face area r_face * dtheta * dz
+    A_r = rf[1:-1][None, :, None] * dth[None, None, :] * dzc[:, None, None]
     R_r = (rf[1:-1] - rc[:-1])[None, :, None] / k3[:, :-1, :] + (rc[1:] - rf[1:-1])[None, :, None] / k3[:, 1:, :]
     G_r = (A_r / R_r).ravel()
     p_r, q_r = idx[:, :-1, :].ravel(), idx[:, 1:, :].ravel()
 
-    # axial links (j, j+1)
-    A_z = (0.5 * dth * (rf[1:] ** 2 - rf[:-1] ** 2))[None, :, None]
+    # axial links (j, j+1): face area 0.5 * dtheta * (r_out^2 - r_in^2)
+    A_z = 0.5 * (rf[1:] ** 2 - rf[:-1] ** 2)[None, :, None] * dth[None, None, :]
     R_z = (zf[1:-1] - zc[:-1])[:, None, None] / k3[:-1] + (zc[1:] - zf[1:-1])[:, None, None] / k3[1:]
     G_z = (A_z / R_z).ravel()
     p_z, q_z = idx[:-1].ravel(), idx[1:].ravel()
 
-    # azimuthal links (m, m+1): face area dr*dz, centre distance r_c*dth (half in each cell)
+    # azimuthal links (m, m+1): face area dr*dz; centre-to-face distances r_c*dtheta_m/2 and r_c*dtheta_{m+1}/2
     A_t = drc[None, :, None] * dzc[:, None, None]
-    R_t = (0.5 * rc * dth)[None, :, None] * (1.0 / k3[:, :, :-1] + 1.0 / k3[:, :, 1:])
+    R_t = (0.5 * rc)[None, :, None] * (dth[:-1][None, None, :] / k3[:, :, :-1] + dth[1:][None, None, :] / k3[:, :, 1:])
     G_t = (A_t / R_t).ravel()
     p_t, q_t = idx[:, :, :-1].ravel(), idx[:, :, 1:].ravel()
 
@@ -149,42 +179,44 @@ def run_simulation_3d(
     store_fields: bool = True,
 ) -> SimResult:
     t_start = time.perf_counter()
-    nth = max(2, int(cfg.numerics.n_theta))
     grid = build_grid(cfg)
-    mat = material_map_3d(cfg, grid, nth)
+    th_f = theta_faces(cfg)
+    dth = np.diff(th_f)
+    nth = len(dth)
+    mat = material_map_3d(cfg, grid, th_f)
     k3, rho_cp = _properties(cfg, mat)
     nr, nz = grid.nr, grid.nz
     N = nz * nr * nth
     if N > cfg.numerics.max_cells * 4:
-        raise ValueError(f"3D 미지수 {N:,} 가 한도({cfg.numerics.max_cells * 4:,})를 넘습니다. Δz, nθ 또는 void 크기를 조정하세요.")
+        raise ValueError(f"3D 미지수 {N:,} 가 한도({cfg.numerics.max_cells * 4:,})를 넘습니다. void 크기/깊이 또는 프리셋을 조정하세요.")
 
-    dth = math.pi / nth
-    V = (0.5 * dth * (grid.r_faces[1:] ** 2 - grid.r_faces[:-1] ** 2))[None, :, None] * grid.dz_c[:, None, None]
+    A_z_cell = 0.5 * (grid.r_faces[1:] ** 2 - grid.r_faces[:-1] ** 2)[None, :, None] * dth[None, None, :]   # (1, nr, nth) top-face area
+    V = A_z_cell * grid.dz_c[:, None, None]
     C = (rho_cp * V).ravel()                                     # J/K per cell (half cylinder)
-    Lap = assemble_laplacian_3d(grid, k3, nth)
+    Lap = assemble_laplacian_3d(grid, k3, th_f)
     Cdiag = sp.diags(C)
     times = cfg.time_grid()
     dts = np.diff(times)
 
-    # laser source on the top faces of copper cells: axisymmetric Gaussian, per-sector fraction dth/(2 pi)
+    # laser source on the top faces of copper cells: axisymmetric Gaussian, per-sector fraction dtheta/(2 pi)
     la = cfg.laser
     q_abs = la.I0 * (1.0 - la.reflectivity)
-    Wsrc = gaussian_annulus_weights(grid.r_faces, la.w, cfg.geometry.R_cu) * dth / (2.0 * math.pi)   # (nr,)
+    W_ann = gaussian_annulus_weights(grid.r_faces, la.w, cfg.geometry.R_cu)                       # (nr,)
     src3 = np.zeros((nz, nr, nth))
-    src3[0, :, :] = q_abs * Wsrc[:, None]
+    src3[0] = q_abs * W_ann[:, None] * dth[None, :] / (2.0 * math.pi)
     src3[0][mat[0] != MAT_COPPER] = 0.0
     src = src3.ravel()
     src_total = src.sum()
 
     # surface reconstruction and probe weights (same definitions as the 2-D solver)
     dz0 = grid.dz_c[0]
-    face_corr = (src3[0] / (0.5 * dth * (grid.r_faces[1:] ** 2 - grid.r_faces[:-1] ** 2))[:, None]) * (0.5 * dz0) / k3[0]   # (nr, nth)
+    face_corr = (src3[0] / A_z_cell[0]) * (0.5 * dz0) / k3[0]                                    # (nr, nth)
     if la.probe_w <= 0:
         pw = np.zeros((nr, nth))
         pw[0, :] = 1.0
     else:
-        pw = np.broadcast_to(gaussian_annulus_weights(grid.r_faces, la.probe_w, cfg.geometry.R_cu)[:, None], (nr, nth)).copy()
-    pw /= pw.sum()
+        pw = gaussian_annulus_weights(grid.r_faces, la.probe_w, cfg.geometry.R_cu)[:, None] * dth[None, :]
+    pw = pw / pw.sum()
 
     n_steps = len(times) - 1
     pulse = la.f(times)
@@ -235,12 +267,12 @@ def run_simulation_3d(
     diag = cfg.diagnostics()
     iters = solver.n_iter if solver is not None else []
     diag.update(
-        n_cells=N, nr=nr, nz=nz, n_theta=nth, absorbed_energy=float(E_in[-1]), n_factorisations=n_factor,
-        absorbed_fraction_in_rod=float(gaussian_annulus_weights(grid.r_faces, la.w, cfg.geometry.R_cu).sum() / (0.5 * math.pi * la.w ** 2)),
+        n_cells=N, nr=nr, nz=nz, n_theta=nth, dtheta_min=float(dth.min()), dtheta_max=float(dth.max()),
+        absorbed_energy=float(E_in[-1]), n_factorisations=n_factor,
+        absorbed_fraction_in_rod=float(W_ann.sum() / (0.5 * math.pi * la.w ** 2)),
         solver="직접 LU (SuperLU)" if direct else "ILU + BiCGSTAB",
         mean_iterations=float(np.mean(iters)) if iters else 0.0,
     )
-    # material plane for the display (same layout as the snapshots)
     mat_plane = np.concatenate([mat[:, ::-1, -1], mat[:, :, 0]], axis=1)
     return SimResult(
         config=cfg, grid=grid, material=mat_plane, times=times, T_surface=T_surface, T_probe=T_probe,
