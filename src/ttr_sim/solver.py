@@ -266,6 +266,11 @@ class SimConfig:
             warnings.append("void 하단이 로드 후면(z=L)을 넘습니다. void가 잘립니다.")
         if self.void.enabled and self.void.r_outer > g.R_cu:
             warnings.append("void 반경 범위가 구리 반경(40 μm)을 넘습니다. void가 구리 내부로 잘립니다.")
+        if n.t_end_mode == "absolute" and n.t_end_abs < la.pulse_end * 1.05 * (1 - 1e-9):
+            warnings.append(
+                f"입력한 관측 시간창 {n.t_end_abs * 1e6:.3g} μs 가 펄스 지속 시간(≈{la.pulse_end / la.tau_p:.1f}·τp = {la.pulse_end * 1e6:.3g} μs, "
+                f"Gaussian 중심 1.5·τp ± 3σ)보다 짧아 {self.t_end * 1e6:.3g} μs 로 늘렸습니다. 관측창은 펄스가 끝나기 전에 멈출 수 없습니다."
+            )
         if self.void.enabled:
             t_peak_est = la.t_center + 2.0 * self.void.depth ** 2 / self.copper.alpha
             if t_peak_est > self.t_end:
