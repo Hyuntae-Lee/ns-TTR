@@ -171,13 +171,13 @@ class SimConfig:
     def dz_void(self) -> float:
         """Axial spacing in the void zone: at least `void_cells` cells across the void thickness."""
         v, n = self.void, self.numerics
-        return min(n.dz, v.thickness / n.void_cells) if v.enabled else n.dz
+        return min(n.dz, v.thickness / n.void_cells) if v.thickness > 0 else n.dz
 
     @property
     def dr_void(self) -> float:
         """Radial spacing in the void zone: at least `void_cells` cells across the radial half-width."""
         v, n = self.void, self.numerics
-        return min(self.dr, v.r_half / n.void_cells) if v.enabled else self.dr
+        return min(self.dr, v.r_half / n.void_cells) if v.r_half > 0 else self.dr
 
     @property
     def dt(self) -> float:
@@ -496,7 +496,7 @@ def build_grid(cfg: SimConfig) -> Grid:
         zones_z = [(0.0, z_layer, dr, []), (z_layer, z_s, dz, [])]
     else:
         zones_z = [(0.0, z_s, dz, [])]
-    if v.enabled and v.depth < g.L:
+    if v.thickness > 0 and v.depth < g.L:            # zone kept even for the baseline (same grid)
         m = min(v.thickness, 5.0 * dz_v)
         zones_z = _insert_zone(zones_z, (max(0.0, v.depth - m), min(g.L, v.z_bottom + m), dz_v, [v.depth, v.z_bottom]))
     z_faces = _zoned_axis(zones_z, g.L, n.stretch)
@@ -504,7 +504,7 @@ def build_grid(cfg: SimConfig) -> Grid:
     # ---- radial zones inside the copper
     r_s = min(g.R_cu, 2.0 * la.w)
     zones_r = [(0.0, r_s, dr, [])]
-    if v.enabled:
+    if v.r_half > 0:                                  # zone kept even for the baseline (same grid)
         m = min(v.r_half, 5.0 * dr_v)
         bp = [p for p in (v.r_inner, v.r_outer) if 0.0 < p < g.R_cu]
         zones_r = _insert_zone(zones_r, (max(0.0, v.r_inner - m), min(g.R_cu, v.r_outer + m), dr_v, bp))
