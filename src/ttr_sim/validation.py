@@ -70,7 +70,7 @@ def analytic_comparison(base: SimResult) -> dict:
     if not cfg.geometry.homogeneous_copper and d["interface_reached"]:
         notes.append(
             "열 침투 깊이가 구리/실리카 계면(r=40 μm)에 도달했습니다. 해석해는 무한 구리 매질을 가정하므로 "
-            "편차의 일부는 물리적(실리카의 낮은 전도율)입니다. '균질 구리 검증 모드'로 이산화 오차만 분리해 볼 수 있습니다."
+            "편차의 일부는 물리적(실리카의 낮은 전도율)입니다. 이산화 오차만 분리한 검증(균질 구리 조건)은 자동 테스트에 포함되어 있습니다."
         )
     if d["L_diff"] > 0.8 * cfg.geometry.L:
         notes.append("열이 후면(z=L)에 도달하여 semi-infinite 가정이 성립하지 않습니다.")

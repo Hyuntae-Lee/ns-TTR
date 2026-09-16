@@ -266,6 +266,13 @@ class SimConfig:
             warnings.append("void 하단이 로드 후면(z=L)을 넘습니다. void가 잘립니다.")
         if self.void.enabled and self.void.r_outer > g.R_cu:
             warnings.append("void 반경 범위가 구리 반경(40 μm)을 넘습니다. void가 구리 내부로 잘립니다.")
+        if self.void.enabled:
+            t_peak_est = la.t_center + 2.0 * self.void.depth ** 2 / self.copper.alpha
+            if t_peak_est > self.t_end:
+                warnings.append(
+                    f"void 신호 피크 예상 시각 ≈ {t_peak_est * 1e6:.3g} μs (2·d²/D) 가 관측 시간창 {self.t_end * 1e6:.3g} μs 를 넘습니다. "
+                    f"신호 형태를 온전히 보려면 관측 시간창을 {2.0 * t_peak_est * 1e6:.3g} μs 이상으로 늘리세요 (x축 고정이 목적이면 그대로 두어도 됩니다)."
+                )
         interface_reached = L_diff > (g.R_cu - la.w)
         try:
             tg = self.time_grid()
