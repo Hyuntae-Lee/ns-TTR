@@ -792,14 +792,17 @@ if view == VIEWS[2]:
     fa = go.Figure()
     fa.add_trace(go.Scatter(x=base.times * tscale, y=ana["numeric"], name="수치해 (baseline)", line=dict(color="#1f77b4")))
     fa.add_trace(go.Scatter(x=base.times * tscale, y=ana["analytic"], name="해석해", line=dict(color="gray", dash="dash")))
-    fa.add_trace(go.Scatter(x=base.times * tscale, y=ana["numeric"] - ana["analytic"], name="차이", line=dict(color="#d62728"), yaxis="y2"))
-    fa.update_layout(xaxis_title=f"t [{tunit}]", yaxis_title="ΔT [K]", yaxis2=dict(title="차이 [K]", overlaying="y", side="right"),
-                     height=360, legend=dict(orientation="h", y=-0.25))
+    # the difference is drawn on the SAME axis (a secondary axis with its own scale made a 0.4 % gap look large)
+    fa.add_trace(go.Scatter(x=base.times * tscale, y=ana["numeric"] - ana["analytic"], name="차이 (수치해 − 해석해, 같은 축)",
+                            line=dict(color="#d62728")))
+    fa.add_hline(y=0.0, line=dict(color="gray", width=1))
+    fa.update_layout(xaxis_title=f"t [{tunit}]", yaxis_title="ΔT [K]", height=360, legend=dict(orientation="h", y=-0.25))
     st.plotly_chart(fa, use_container_width=True)
     st.caption(
         "해석해: semi-infinite 균질 구리, 표면 Gaussian flux (Carslaw & Jaeger 형태). "
-        "ΔT(0,0,t) = q₀w/(k√(2π))·arctan(√(8Dt)/w) 의 step 응답을 펄스 형상으로 중첩/컨볼루션. "
-        "수치해와 같은 프로브 가중치로 평가합니다."
+        "ΔT(0,0,t) = q₀w/(k√(2π))·arctan(√(8Dt)/w) 의 step 응답을 펄스 파형과 컨볼루션(Duhamel 적분, 미세 시간 격자 FFT). "
+        f"수치해와 같은 프로브 가중치로 평가합니다. 현재 차이: RMS {ana['rms_rel'] * 100:.2f} %, 최대 {ana['max_rel'] * 100:.2f} % (피크 대비) — "
+        "남는 차이는 격자·시간 이산화 오차이며 가열이 가장 급한 구간에서 최대가 됩니다."
     )
     with st.expander("해석해 비교 지표 읽는 법", expanded=False):
         st.markdown(
