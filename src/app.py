@@ -281,6 +281,13 @@ st.markdown(
       }
       section[data-testid="stSidebar"] [data-testid="stExpander"] summary { font-weight: 700; font-size: 1.05rem; padding: 0.85rem 1.1rem; }
       section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover { color: #262730; }
+      /* fixed-size charts: the keyed containers keep their pixel width regardless of the window size */
+      .st-key-fixed_sig_rr, .st-key-fixed_sig_temp { width: 900px !important; min-width: 900px !important; max-width: none !important; }
+      .st-key-fixed_sig_dT, .st-key-fixed_sig_contrast { width: 440px !important; min-width: 440px !important; max-width: none !important; }
+      .st-key-fixed_field_map { width: 1122px !important; min-width: 1122px !important; max-width: none !important; }
+      [class*="st-key-fixed_"] [data-testid="stPlotlyChart"], [class*="st-key-fixed_"] .js-plotly-plot,
+      [class*="st-key-fixed_"] .plot-container { width: 100% !important; min-width: 100% !important; }
+      section.stMain .block-container, [data-testid="stMainBlockContainer"] { overflow-x: auto; }
       /* temperature map: the single reset icon sits top-right inside the plot, translucent until hovered */
       .js-plotly-plot .modebar { opacity: 0.45; transition: opacity 0.15s; }
       .js-plotly-plot .modebar:hover { opacity: 1; }
@@ -504,17 +511,24 @@ T0 = cfg.numerics.T0
 diag = void.diagnostics
 
 # ----------------------------------------------------------------------------- headline metrics
+rr_peak = cfg.laser.c_tr * sig["peak_dT"]
+t_ref = 2 * cfg.void.depth ** 2 / cfg.copper.alpha
+at_end = sig["t_peak_contrast"] >= 0.98 * cfg.t_end          # ratio still rising at the end of the window
 m = st.columns(5)
 m[0].metric("피크 ΔT (baseline)", f"{sig['peak_rise_base']:.3g} K",
             help="void 없는 시료의 프로브 가중 표면 온도 상승 최대값. 선형 모델 유효 범위(10 K / 50 K)와 손상 여부 판단에 사용.")
-m[1].metric("void 신호 피크 (ΔT)", f"{sig['peak_dT']:+.3g} K", help="프로브 가중 표면 온도의 void − baseline 최대 차이")
-rr_peak = cfg.laser.c_tr * sig["peak_dT"]
+m[1].metric("void 신호 피크 (ΔT)", f"{sig['peak_dT']:+.3g} K", delta=f"t = {sig['t_peak'] * tscale:.3g} {tunit}", delta_color="off",
+            help=f"프로브 가중 표면 온도의 void − baseline 차이가 가장 큰 값과 그 시각. 절대 신호가 가장 큰 순간 = 측정하기 가장 좋은 시각. "
+                 f"참고: 2·d²/D ≈ {t_ref * tscale:.3g} {tunit}")
 m[2].metric("void 신호 피크 (ΔR/R)", f"{rr_peak * 1e4:+.3g} ×10⁻⁴",
             help=f"위 온도 차이에 열반사 계수 (dR/dT)/R = {cfg.laser.c_tr:.2e} /K 를 곱한 값. 실험에서 baseline 대비 재야 하는 반사율 변화.")
-m[3].metric("상대 대비", f"{sig['peak_contrast'] * 100:+.1f} %",
-            help="ΔT/ΔT_baseline — baseline 온도 상승이 피크의 0.1 % 이상인 구간에서의 최대 상대 차이. 검출 난이도의 척도.")
-m[4].metric("신호 피크 시각", f"{sig['t_peak'] * tscale:.3g} {tunit}",
-            help=f"void 신호(ΔT)가 최대가 되는 시각. 참고: 2·d²/D ≈ {2 * cfg.void.depth ** 2 / cfg.copper.alpha * tscale:.3g} {tunit}")
+m[3].metric("피크 시점 대비", f"{sig['contrast_at_peak'] * 100:+.1f} %",
+            help="신호 피크 시각에서의 (ΔT_void − ΔT_base)/ΔT_base. 절대 신호가 가장 큰 순간에 정상 시료 대비 몇 % 다른가 — 검출 난이도의 실질 척도.")
+m[4].metric("상대 대비 최대", f"{sig['peak_contrast'] * 100:+.1f} %",
+            delta=f"t = {sig['t_peak_contrast'] * tscale:.3g} {tunit}" + (" (창 끝, 상승 중)" if at_end else ""), delta_color="off",
+            help="(ΔT_void − ΔT_base)/ΔT_base 의 시간에 따른 최대값과 그 시각 (baseline 상승이 피크의 0.1 % 이상인 구간). "
+                 "정상 시료가 식은 뒤 void 시료만 뜨겁게 남는 후반에 커지는 경향이 있어 절대 신호는 작을 수 있고, "
+                 "관측창 끝에서 최대이면 창을 늘리면 더 커지는 값입니다.")
 for w in diag["warnings"]:
     st.warning(w)
 if not cfg.void.enabled:
@@ -553,7 +567,8 @@ if view == VIEWS[0]:
     )
     apply_x(figr)
     figr.update_layout(width=SIG_W, height=420, autosize=False)
-    st.plotly_chart(figr, use_container_width=False)
+    with st.container(key="fixed_sig_rr"):
+        st.plotly_chart(figr, use_container_width=False)
     i_pk = int(np.argmax(np.abs(rr_base)))
     txt = f"baseline 피크 ΔR/R = {rr_base[i_pk] / SCALE:.3e} ({rr_base[i_pk]:+.3g}×10⁻⁴)"
     if cfg.void.enabled:
@@ -575,7 +590,8 @@ if view == VIEWS[0]:
     add_pulse_trace(fig, base, tscale)
     apply_x(fig)
     fig.update_layout(width=SIG_W, height=420, autosize=False)
-    st.plotly_chart(fig, use_container_width=False)
+    with st.container(key="fixed_sig_temp"):
+        st.plotly_chart(fig, use_container_width=False)
 
     if cfg.void.enabled:
         c1, c2 = st.columns(2)
@@ -586,14 +602,16 @@ if view == VIEWS[0]:
         apply_x(fig2)
         fig2.update_layout(title="void 신호 ΔT(t)", xaxis_title=f"t [{tunit}]", yaxis_title="ΔT [K]", height=360)
         fig2.update_layout(width=SIG_W // 2 - 10, height=360, autosize=False)
-        c1.plotly_chart(fig2, use_container_width=False)
+        with c1.container(key="fixed_sig_dT"):
+            st.plotly_chart(fig2, use_container_width=False)
         fig3 = go.Figure()
         fig3.add_trace(go.Scatter(x=void.times * tscale, y=sig["contrast"] * 100, name="상대 대비", line=dict(color="#2ca02c")))
         pulse_shading(fig3, cfg.laser, tscale)
         apply_x(fig3)
         fig3.update_layout(title="상대 대비 ΔT / ΔT_baseline", xaxis_title=f"t [{tunit}]", yaxis_title="[%]", height=360)
         fig3.update_layout(width=SIG_W // 2 - 10, height=360, autosize=False)
-        c2.plotly_chart(fig3, use_container_width=False)
+        with c2.container(key="fixed_sig_contrast"):
+            st.plotly_chart(fig3, use_container_width=False)
         tau_void = cfg.void.depth ** 2 / cfg.copper.alpha
         st.caption(
             f"참고: void 깊이 d = {cfg.void.depth * 1e6:.3g} μm 의 특징 시간 τ_void = d²/D = {fmt_time(tau_void)} "
@@ -707,7 +725,8 @@ if view == VIEWS[1]:
             currentvalue=dict(prefix="스냅샷 t = ", suffix=f" {tunit}", visible=True, xanchor="left"),
         )],
     )
-    st.plotly_chart(
+    field_box = st.container(key="fixed_field_map")
+    field_box.plotly_chart(
         fig, use_container_width=False,
         config={
             "scrollZoom": True, "displaylogo": False, "doubleClick": "reset",
