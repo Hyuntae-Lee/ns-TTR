@@ -1,4 +1,4 @@
-# ns-TTR Void Detection Simulator
+# Nanosecond Transient Thermoreflectance Simulator
 
 구리 마이크로 실린더(⌀80 μm × 500 μm, fused silica 매립) 내부 void를 레이저 펌프-프로브
 thermoreflectance로 검출할 수 있는지 사전 검증하는 시뮬레이터입니다.
@@ -29,13 +29,19 @@ Community Cloud에서 `app.py`를 진입점으로 지정하면 됩니다. 별도
 | `ttr_sim/materials.py` | 구리 / fused silica / 공기 물성치 |
 | `ttr_sim/presets.py` | void 깊이별 펄스폭·격자 프리셋(§3), k_void 프리셋(§4) |
 | `ttr_sim/solver.py` | 축대칭 (r,z) 유한체적 + Crank–Nicolson 솔버, 격자 생성, void 신호 지표 |
+| `ttr_sim/solver3d.py` | 축 밖 void 용 3차원 (r,θ,z) 솔버 — 반원 대칭 격자, 직접 LU 또는 ILU+BiCGSTAB |
 | `ttr_sim/analytic.py` | Carslaw & Jaeger 형 semi-infinite 해석해 (Gaussian spot, square/Gaussian 펄스) |
 | `ttr_sim/validation.py` | 에너지 보존 / grid convergence / 해석해 비교 / k_void 스윕 |
 | `tests/test_solver.py` | pytest 검증 스위트 |
 
 ## 물리·수치 모델 요약
 
-* 지배방정식 `ρc ∂T/∂t = ∇·(k∇T)`, 축대칭 (r, z). 내부 열원 없음.
+* 지배방정식 `ρc ∂T/∂t = ∇·(k∇T)`. void 가 축 위에 있으면 축대칭 (r, z) 2D, 축에서 벗어나 있으면 3차원 (r, θ, z) 로 계산. 내부 열원 없음.
+* 3D 계산 (`solver3d.py`): 펌프·프로브는 축 중심 고정, void 하나가 θ = 0 방향으로 r_center 만큼 벗어난 구성. θ → −θ 대칭을 이용해
+  반원(0 ≤ θ ≤ π)만 풀며(θ = 0, π 면은 zero-flux), (r, z) 격자는 2D 와 동일하므로 축대칭 장은 2D 결과와 정확히 일치 →
+  baseline 은 2D 로 두고 void 케이스만 3D 로 풀어 신호를 비교. 축은 쐐기 셀로 처리. 미지수 6만 이하는 SuperLU 직접해,
+  그 이상은 ILU 전처리 BiCGSTAB (Δt 블록마다 전처리 재구성). 스냅샷·표면 온도는 void 를 지나는 (x, z) 단면(θ = π | θ = 0)으로 저장해
+  기존 단면 시각화 그대로 표시. nθ 는 고급 수치 설정에서 지정 (기본 16).
 * 레이저: Beer–Lambert 부피 열원을 `Δz ≫ 1/α_abs` 조건에서 표면 flux
   `-k ∂T/∂z|_{z=0} = I₀(1-R) f(t) exp(-2r²/w²)` 로 재표현. 각 환형 면 위에서 Gaussian을 정확 적분.
   Δz/δ_abs < 7 이면 GUI에 경고.
@@ -49,9 +55,8 @@ Community Cloud에서 `app.py`를 진입점으로 지정하면 됩니다. 별도
   이전/다음 스냅샷 버튼과 키보드 ←/→ 로 스냅샷 이동. 실리카 영역은 계산에는 포함되지만 표시 범위 밖.
   스냅샷들은 Plotly 애니메이션 프레임으로 한 그림에 담겨 있어, 그림 안의 슬라이더/재생 버튼으로 시간을 바꾸면 브라우저 안에서
   프레임만 교체됨 (Streamlit 재실행·재렌더링 없음, 확대 상태 유지). 프레임 데이터가 약 2백만 값을 넘으면 스냅샷을 균등하게 솎아 표시.
-* void 형상: 사이드바에서 타원 / 상자 선택. 타원은 (r, z) 단면이 타원 (축상이면 회전 타원체, 반경 위치 > 0 이면 타원 단면의 링),
-  상자는 단면이 직사각형 (축상이면 원판, 반경 위치 > 0 이면 사각 링). 깊이/두께/반경 반폭은 두 형상 모두 외접 상자의 치수.
-  상자형에 반경 반폭 40 μm 를 주면 단면 전체를 가로막아 우회로가 없는 완전 차단 케이스가 됨.
+* void 형상: 회전 타원체(기포형)로 고정 — 수평 반축 = 반경 반폭, 수직 반축 = 두께/2. 깊이/두께/반경 반폭은 외접 상자의 치수.
+  코드에서는 `VoidSpec(shape="box")` 로 원판(짧은 원기둥) 형태도 계산 가능 (GUI 에는 노출하지 않음).
 * 온도장 스냅샷: 관측 시간창을 균등 분할하여 저장. 개수는 고급 수치 설정의 "온도장 스냅샷 개수" 슬라이더(12~100)로 지정.
   검증용 재계산(grid convergence, k_void 스윕)은 스냅샷을 저장하지 않음.
 * 격자 간격 Δz: 깊이 프리셋은 펄스폭 τp 만 정하고, 권장 Δz = √(D·τp)/10 은 고급 수치 설정의 "격자 간격 Δz" 입력에

@@ -143,6 +143,7 @@ class Numerics:
     stretch: float = 1.15        # geometric growth ratio of the grid outside the fine regions
     T0: float = 293.15           # initial / ambient temperature, K
     n_snapshots: int = 12        # number of stored full-field snapshots
+    n_theta: int = 16            # azimuthal cells on the half cylinder (3-D runs for off-axis voids only)
     max_cells: int = 600_000
     max_steps: int = 400_000
 
@@ -567,6 +568,8 @@ class SimResult:
     pulse: np.ndarray               # (nt,) f(t)
     wall_time: float
     diagnostics: dict = field(default_factory=dict)
+    is_3d: bool = False             # True: solved in (r, theta, z); snapshots/T_surface/material hold the (x, z) plane (nz, 2 nr)
+    n_theta: int = 1
 
     @property
     def energy_error(self) -> float:

@@ -109,6 +109,61 @@ def test_void_based_window_and_short_pulse_deep_void():
     assert sig["peak_dT"] > 0 and sig["t_peak"] > 0.3 * tau_void    # signature arrives on the d^2/D time scale
 
 
+# ----------------------------------------------------------------------------- 3-D (off-axis void)
+def _cfg3d(r_center_um, n_theta=6, shape="ellipse"):
+    p = DEPTH_PRESETS[4]   # 6.9 us pulse, dz 2.8 um -> small (r, z) grid
+    return SimConfig(
+        geometry=Geometry(),
+        void=VoidSpec(enabled=True, depth=20e-6, thickness=10e-6, r_center=r_center_um * 1e-6, r_half=8e-6, k=0.026, shape=shape),
+        laser=Laser(tau_p=p.tau_p, energy=100e-9, w=10e-6, probe_w=5e-6),
+        numerics=Numerics(dz=p.dz, n_snapshots=4, n_theta=n_theta),
+    )
+
+
+def test_3d_reproduces_2d_for_on_axis_void():
+    """Forced 3-D run of an axisymmetric case must equal the 2-D solver (same (r, z) grid, direct solves)."""
+    from ttr_sim.solver3d import run_simulation_3d
+    cfg = _cfg3d(0.0)
+    r2 = run_simulation(cfg)
+    r3 = run_simulation_3d(cfg)
+    assert r3.is_3d and r3.n_theta == 6
+    assert np.allclose(r3.T_probe, r2.T_probe, rtol=1e-7, atol=1e-9)
+    assert np.allclose(r3.T_axis, r2.T_axis, rtol=1e-7, atol=1e-9)
+    assert abs(r3.energy_error) < 1e-9
+    # the displayed plane is the mirrored 2-D field
+    _, plane = r3.snapshots[-1]
+    _, T2 = r2.snapshots[-1]
+    assert plane.shape == (r2.grid.nz, 2 * r2.grid.nr)
+    assert np.allclose(plane[:, r2.grid.nr:], T2, rtol=1e-7, atol=1e-9)
+
+
+def test_off_axis_void_dispatch_and_signal():
+    from ttr_sim.validation import run_pair
+    base, v0, s0 = run_pair(_cfg3d(0.0))                # on axis -> 2-D
+    base3, v1, s1 = run_pair(_cfg3d(15.0))              # displaced -> 3-D
+    assert not v0.is_3d and v1.is_3d
+    assert np.allclose(base.T_probe, base3.T_probe)     # baseline stays 2-D and identical
+    assert abs(v1.energy_error) < 1e-9
+    assert 0 < s1["peak_dT"] < s0["peak_dT"]            # a displaced void gives a weaker but positive signal
+    # symmetry of the displayed plane: void appears only on the x > 0 side
+    from ttr_sim.solver import MAT_VOID
+    nr = v1.grid.nr
+    assert (v1.material[:, nr:] == MAT_VOID).any() and not (v1.material[:, :nr] == MAT_VOID).any()
+
+
+def test_3d_void_volume():
+    """Staircase spheroid volume on the 3-D grid is close to 4/3 pi a^2 c (both halves)."""
+    from ttr_sim.solver3d import material_map_3d
+    cfg = _cfg3d(15.0, n_theta=24)
+    g = build_grid(cfg)
+    mat = material_map_3d(cfg, g, 24)
+    dth = math.pi / 24
+    V = (0.5 * dth * (g.r_faces[1:] ** 2 - g.r_faces[:-1] ** 2))[None, :, None] * g.dz_c[:, None, None]
+    vol = 2.0 * float((np.broadcast_to(V, mat.shape) * (mat == MAT_VOID)).sum())
+    v = cfg.void
+    assert vol == pytest.approx(4.0 / 3.0 * math.pi * v.r_half ** 2 * 0.5 * v.thickness, rel=0.2)
+
+
 @pytest.mark.parametrize("profile", ["square", "gaussian"])
 def test_analytic_with_growing_dt(profile):
     cfg = make_cfg(2, profile=profile, homogeneous=True, dt_growth=1.05)

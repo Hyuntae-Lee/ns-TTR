@@ -16,8 +16,16 @@ import numpy as np
 from .analytic import analytic_probe_signal
 from .presets import KVOID_PRESETS
 from .solver import SimConfig, SimResult, baseline_config, probe_weights, refined_config, run_simulation, void_signal
+from .solver3d import needs_3d, run_simulation_3d
 
 Progress = Optional[Callable[[float, str], None]]
+
+
+def run_case(cfg: SimConfig, progress=None, store_fields: bool = True) -> SimResult:
+    """Dispatch: 3-D (r, theta, z) solver for an off-axis void, axisymmetric 2-D otherwise."""
+    if needs_3d(cfg):
+        return run_simulation_3d(cfg, progress=progress, store_fields=store_fields)
+    return run_simulation(cfg, progress=progress, store_fields=store_fields)
 
 
 def _sub_progress(progress: Progress, i: int, n: int, label: str):
@@ -38,7 +46,8 @@ def run_pair(cfg: SimConfig, progress: Progress = None, store_fields: bool = Tru
     base = run_simulation(baseline_config(cfg), progress=_sub_progress(progress, 0, 2, "baseline (void 없음)"),
                           store_fields=store_fields)
     if cfg.void.enabled:
-        void = run_simulation(cfg, progress=_sub_progress(progress, 1, 2, "void 포함"), store_fields=store_fields)
+        label = "void 포함 (3D)" if needs_3d(cfg) else "void 포함"
+        void = run_case(cfg, progress=_sub_progress(progress, 1, 2, label), store_fields=store_fields)
     else:
         void = base
         if progress:
@@ -140,7 +149,7 @@ def kvoid_sensitivity(
     rows = []
     for i, k in enumerate(ks):
         c = replace(cfg, void=replace(cfg.void, k=k))
-        v = run_simulation(c, progress=_sub_progress(progress, i, len(ks), f"k_void = {k:g} W/m·K"), store_fields=False)
+        v = run_case(c, progress=_sub_progress(progress, i, len(ks), f"k_void = {k:g} W/m·K"), store_fields=False)
         s = void_signal(base, v)
         rows.append(dict(
             k=k, peak_dT=s["peak_dT"], peak_contrast=s["peak_contrast"], t_peak=s["t_peak"],

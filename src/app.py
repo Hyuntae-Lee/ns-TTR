@@ -22,7 +22,8 @@ from ttr_sim.presets import fmt_length, fmt_time
 from ttr_sim.solver import MAT_VOID, build_grid, material_map
 from ttr_sim.validation import analytic_comparison, grid_convergence, kvoid_sensitivity, run_pair
 
-st.set_page_config(page_title="ns-TTR Void Simulator", page_icon="🔬", layout="wide")
+st.set_page_config(page_title="Nanosecond Transient Thermoreflectance Simulator", page_icon="🔬", layout="wide",
+                   initial_sidebar_state="expanded")
 
 UM = 1e-6
 
@@ -170,8 +171,6 @@ def on_preset_change():
         st.session_state[key] = val
 
 
-# Sidebar label -> VoidSpec.shape
-VOID_SHAPES = {"타원 (회전 타원체 / 링)": "ellipse", "상자 (원판 / 사각 링)": "box"}
 # Sidebar label -> Numerics.t_end_mode
 T_END_MODES = {"펄스폭 배수 (× τp)": "tau_p", "void 깊이 기준 (× d²/D)": "void", "절대 시간 [μs]": "absolute"}
 
@@ -194,7 +193,7 @@ def build_config() -> SimConfig:
     void = VoidSpec(
         enabled=True, depth=s.void_depth_um * UM, thickness=s.void_thickness_um * UM,
         r_center=s.void_rc_um * UM, r_half=s.void_r_um * UM, k=k_void, rho_cp=AIR.rho_cp,
-        shape=VOID_SHAPES.get(s.get("void_shape"), "ellipse"),
+        shape="ellipse",                                  # fixed: spheroidal void (bubble-like)
     )
     laser = Laser(
         tau_p=p.tau_p, profile=s.profile, energy=s.energy_nJ * 1e-9, w=s.spot_um * UM,
@@ -205,6 +204,7 @@ def build_config() -> SimConfig:
         dz=dz, fo=s.fo, t_end_factor=float(s.get("t_end_factor", 5.0)),
         t_end_mode=T_END_MODES.get(s.get("t_end_mode"), "tau_p"), t_end_abs=float(s.get("t_end_abs_us", 10.0)) * 1e-6,
         dt_growth=float(s.get("dt_growth", 1.05)), stretch=s.stretch, n_snapshots=int(s.get("n_snapshots", 12)),
+        n_theta=int(s.get("n_theta", 16)),
     )
     geometry = Geometry(homogeneous_copper=s.homogeneous)
     return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics)
@@ -250,6 +250,18 @@ st.markdown(
         font-family: Consolas, "Courier New", monospace !important;
         white-space: pre !important;
       }
+      /* no sidebar collapse control: the settings panel is always shown */
+      [data-testid="stSidebarCollapseButton"], [data-testid="collapsedControl"],
+      section[data-testid="stSidebar"] button[kind="header"],
+      section[data-testid="stSidebar"] button[kind="headerNoPadding"] { display: none !important; }
+      /* the (now empty) sidebar header reserved ~60px; drop it and tighten the top of the content */
+      [data-testid="stSidebarHeader"] { display: none !important; }
+      [data-testid="stSidebarUserContent"] { padding-top: 0.75rem !important; }
+      section[data-testid="stSidebar"] h1 {
+        padding-top: 0.25rem !important; padding-bottom: 0.5rem !important;
+        font-size: 1.15rem !important; line-height: 1.4 !important; white-space: nowrap !important;
+        letter-spacing: -0.01em;
+      }
       /* wider sidebar and dropdown so the padded preset labels are not truncated */
       section[data-testid="stSidebar"] { width: 30rem !important; min-width: 30rem !important; }
       section[data-testid="stSidebar"] > div { width: 30rem !important; }
@@ -259,13 +271,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 with st.sidebar:
-    st.title("🔬 ns-TTR Void Simulator")
-    st.caption("구리 마이크로 실린더(⌀80 μm × 500 μm, fused silica 매립) 내부 void의 펌프-프로브 thermoreflectance 검출 가능성 시뮬레이션")
+    st.title("Nanosecond Transient Thermoreflectance Simulator")
 
     st.header("1. Void 깊이 프리셋")
     st.selectbox(
         "목표 void 깊이 → 펄스폭 + 격자 (짝으로 결정)", options=list(range(len(DEPTH_PRESETS))),
         format_func=lambda i: DEPTH_PRESETS[i].display, key="preset_idx", on_change=on_preset_change,
+        label_visibility="collapsed",
         help="τp = 2·d²/D_th 로 펄스폭이 정해집니다. 권장 격자 Δz = √(D_th·τp)/10 은 고급 수치 설정에 기본값으로 채워지며 거기서 바꿀 수 있습니다.",
     )
     preset = DEPTH_PRESETS[st.session_state.preset_idx]
@@ -273,32 +285,20 @@ with st.sidebar:
         st.warning(preset.warning)
 
     st.header("2. k_void (void 열전도율)")
-    st.selectbox(
-        "수치적 floor 값 — 민감도를 꼭 확인하세요", options=list(range(len(KVOID_PRESETS))),
-        format_func=lambda i: KVOID_PRESETS[i].label, key="kvoid_idx",
-    )
-    kv = KVOID_PRESETS[st.session_state.kvoid_idx]
-    st.caption(kv.description)
-    if kv.warning:
-        st.warning(kv.warning)
+    st.session_state.kvoid_idx = 0                       # fixed: real air value (no user control)
+    st.markdown(f"**{KVOID_PRESETS[0].k:g} W/m·K (공기)**")
 
     # All numeric inputs live in a form: typed values are collected when the 적용 button is
     # clicked (or Enter is pressed inside a field), so they never depend on a keypress being
     # delivered to the widget (an IME can swallow Enter) and never trigger intermediate reruns.
     with st.form("settings", border=False):
         st.header("3. Void 형상")
-        st.caption("값을 입력한 뒤 아래 **적용 (재계산)** 버튼을 누르면 반영됩니다.")
-        st.radio(
-            "void 단면 형상", list(VOID_SHAPES.keys()), key="void_shape", horizontal=True,
-            help="타원: (r, z) 단면이 타원 — 축상이면 회전 타원체, 반경 위치 > 0 이면 타원 단면의 링. "
-                 "상자: 단면이 직사각형 — 축상이면 원판, 반경 위치 > 0 이면 사각 단면의 링. "
-                 "아래 깊이/두께/반경은 두 형상 모두 외접 상자의 치수입니다. 상자형이 반경 반폭 40 μm 이면 단면 전체를 막습니다.",
-        )
         c1, c2 = st.columns(2)
         c1.number_input("깊이 (윗면 z) [μm]", min_value=0.0, max_value=500.0, step=0.01, key="void_depth_um", format="%.3f")
         c2.number_input("두께 [μm]", min_value=0.001, max_value=500.0, step=0.01, key="void_thickness_um", format="%.3f")
-        c1.number_input("반경 위치 (0 = 축상) [μm]", min_value=0.0, max_value=40.0, step=0.01, key="void_rc_um", value=0.0, format="%.3f",
-                        help="0이면 축상의 원판형 void, 0보다 크면 축대칭 링(고리)형 void로 근사합니다.")
+        c1.number_input("축에서 벗어난 거리 [μm]", min_value=0.0, max_value=40.0, step=0.01, key="void_rc_um", value=0.0, format="%.3f",
+                        help="void 중심이 원기둥 축에서 벗어난 거리. 0 이면 축대칭 2D 계산, 0 보다 크면 void 하나가 축 밖에 있는 "
+                             "3차원(r, θ, z) 계산을 합니다 (펌프·프로브는 축 중심 고정). 방향은 결과에 영향이 없으므로 거리만 지정합니다.")
         c2.number_input("반경 반폭 [μm]", min_value=0.001, max_value=40.0, step=0.01, key="void_r_um", format="%.3f")
 
         st.header("4. 레이저")
@@ -339,6 +339,9 @@ with st.sidebar:
                 help="펄스가 끝난 뒤 시간 간격을 스텝마다 이 비율로 키웁니다 (8스텝 블록 단위로 적용, 블록마다 행렬 재분해). "
                      "1.00 이면 Δt 고정. 1.05 면 Δt ≈ 0.05·t 로 상대 시간 해상도가 일정하게 유지되며, 긴 관측창도 수백 스텝이면 충분합니다.",
             )
+            st.slider("3D 방위각 셀 수 nθ (반원 기준)", min_value=6, max_value=48, value=16, step=2, key="n_theta",
+                      help="void 가 축에서 벗어난 경우에만 3차원(r, θ, z) 계산을 합니다. θ 방향 대칭을 이용해 반원(0~π)만 풀며, "
+                           "이 값은 그 반원을 나누는 셀 수입니다. 미지수 = (r, z) 셀 수 × nθ 이므로 계산 시간이 비례해 늘어납니다.")
             st.slider("격자 성장률 (관심 영역 밖)", min_value=1.02, max_value=1.5, value=1.15, step=0.01, key="stretch",
                       help="표면층과 void 주변은 Δz 로 균일하고, 그 사이·아래·실리카는 셀마다 이 비율로 커집니다. 1.02 면 거의 균일 격자.")
             st.slider("온도장 스냅샷 개수", min_value=12, max_value=100, value=12, step=1, key="n_snapshots",
@@ -360,7 +363,7 @@ with st.sidebar:
     v = cfg_preview.void
     blocks_all = v.shape == "box" and v.r_inner == 0 and v.r_outer >= cfg_preview.geometry.R_cu * (1 - 1e-9)
     st.caption(
-        f"void ({'타원' if v.shape == 'ellipse' else '상자'}) 범위: z = {v.depth * 1e6:.3f} ~ {v.z_bottom * 1e6:.3f} μm, "
+        f"void 범위: z = {v.depth * 1e6:.3f} ~ {v.z_bottom * 1e6:.3f} μm, "
         f"r = {v.r_inner * 1e6:.3f} ~ {min(v.r_outer, cfg_preview.geometry.R_cu) * 1e6:.3f} μm, "
         f"k_void = {v.k:g} W/m·K" + ("  — 단면 전체를 가로막음 (우회로 없음)" if blocks_all else "")
     )
@@ -375,6 +378,14 @@ with st.sidebar:
         + f"  ·  **스텝** = {d['n_steps']:,}  ·  **셀** = {n_cells if n_cells else '—'}  \n"
         f"**관측창** = {fmt_time(d['t_end'])}  ·  **√(D·t_end)** = {fmt_length(d['L_diff'])}"
     )
+
+    if cfg_preview.void.r_center > 0 and n_cells:
+        n_unknowns = n_cells * int(st.session_state.get("n_theta", 16))
+        st.info(
+            f"축에서 벗어난 void → void 케이스는 3차원 (r, θ, z) 계산: nθ = {st.session_state.get('n_theta', 16)} (반원), "
+            f"미지수 ≈ {n_unknowns:,} ({'직접 LU' if n_unknowns <= 60_000 else 'ILU + 반복법'}). "
+            f"baseline 은 축대칭 2D. 계산 시간은 2D 대비 대략 nθ 배 이상 걸립니다."
+        )
 
     # ---- peak power and an analytic estimate of the surface peak rise (linear-model validity check)
     la_p = cfg_preview.laser
@@ -555,23 +566,35 @@ if view == VIEWS[1]:
     grid = void.grid if cfg.void.enabled else base.grid
     g_plot = base.grid if src_choice == "baseline" else grid
 
-    def field_at(i: int) -> np.ndarray:
-        """ΔT field (nz, nr) on g_plot for snapshot i of the selected quantity."""
-        if src_choice == "baseline":
-            return base.snapshots[i][1] - T0
-        Tv = snaps[i][1]
-        if is_diff:
-            Tb_ = base.snapshots[i][1]
-            itp = RegularGridInterpolator((base.grid.z_c, base.grid.r_c), Tb_, bounds_error=False, fill_value=None)
-            ZZ, RR = np.meshgrid(grid.z_c, grid.r_c, indexing="ij")
-            return Tv - itp(np.stack([ZZ.ravel(), RR.ravel()], axis=1)).reshape(Tv.shape)
-        return Tv - T0
-
-    # Display region: the whole copper cylinder, |r| <= 40 μm (mirrored about the axis), 0 <= z <= 500 μm.
+    # Display region: the whole copper cylinder, |x| <= 40 μm, 0 <= z <= 500 μm.  2-D results are
+    # mirrored about the axis; 3-D results already hold the (x, z) plane through the off-axis void.
     R_cu_um, L_um = cfg.geometry.R_cu * 1e6, cfg.geometry.L * 1e6
     ir = int(np.argmin(np.abs(g_plot.r_faces - cfg.geometry.R_cu)))      # number of radial cells inside the copper
     x_um = np.concatenate([-g_plot.r_c[:ir][::-1], g_plot.r_c[:ir]]) * 1e6
     z_um = g_plot.z_c * 1e6
+    void_3d = cfg.void.enabled and void.is_3d
+
+    def mirror(f: np.ndarray) -> np.ndarray:
+        f = f[:, :ir]
+        return np.concatenate([f[:, ::-1], f], axis=1)
+
+    def base_plane(i: int, on_grid) -> np.ndarray:
+        """Mirrored baseline ΔT plane (nz, 2 ir), interpolated onto `on_grid` if it differs."""
+        Tb_ = base.snapshots[i][1] - T0
+        if on_grid is not base.grid:
+            itp = RegularGridInterpolator((base.grid.z_c, base.grid.r_c), Tb_, bounds_error=False, fill_value=None)
+            ZZ, RR = np.meshgrid(on_grid.z_c, on_grid.r_c, indexing="ij")
+            Tb_ = itp(np.stack([ZZ.ravel(), RR.ravel()], axis=1)).reshape(len(on_grid.z_c), len(on_grid.r_c))
+        return mirror(Tb_)
+
+    def plane_at(i: int) -> np.ndarray:
+        """Full-width ΔT plane (nz, 2 ir) for snapshot i of the selected quantity."""
+        if src_choice == "baseline":
+            return base_plane(i, base.grid)
+        Tv = snaps[i][1] - T0
+        nr_v = grid.nr
+        vplane = Tv[:, nr_v - ir: nr_v + ir] if void_3d else mirror(Tv)   # 3-D snapshot = (nz, 2 nr) plane
+        return vplane - base_plane(i, grid) if is_diff else vplane
 
     # All snapshots are embedded as Plotly animation frames: moving the in-figure slider swaps the frame
     # data in the browser only (no Streamlit rerun, no redraw of the figure, zoom/pan preserved).
@@ -584,8 +607,7 @@ if view == VIEWS[1]:
     if cache_key not in st.session_state:
         fields = []
         for i in frame_idx:
-            f = field_at(i)[:, :ir]
-            fields.append(np.concatenate([f[:, ::-1], f], axis=1).astype(np.float32))
+            fields.append(plane_at(i).astype(np.float32))
         gmax = max(max(float(np.max(np.abs(f))) for f in fields), 1e-30)
         st.session_state[cache_key] = (fields, gmax)
     fields, gmax = st.session_state[cache_key]
@@ -611,7 +633,7 @@ if view == VIEWS[1]:
 
     if cfg.void.enabled and src_choice != "baseline":
         v = cfg.void
-        for sgn in ((1,) if v.r_center == 0 else (1, -1)):
+        for sgn in (1,):                      # single void; an off-axis void lies on the x > 0 side of the plane
             xa, xb = sgn * (v.r_center - v.r_half) * 1e6, sgn * (v.r_center + v.r_half) * 1e6
             fig.add_shape(type="circle" if v.shape == "ellipse" else "rect",
                           x0=min(xa, xb), x1=max(xa, xb), y0=v.depth * 1e6, y1=v.z_bottom * 1e6,
@@ -664,7 +686,7 @@ if view == VIEWS[1]:
         figa = go.Figure()
         for k_i in np.linspace(0, len(snaps) - 1, min(6, len(snaps))).round().astype(int):
             ts = snaps[k_i][0]
-            figa.add_trace(go.Scatter(x=g_plot.z_c[:iz_p] * 1e6, y=field_at(k_i)[:iz_p, 0], name=f"t={ts * tscale:.3g} {tunit}"))
+            figa.add_trace(go.Scatter(x=g_plot.z_c[:iz_p] * 1e6, y=plane_at(k_i)[:iz_p, ir], name=f"t={ts * tscale:.3g} {tunit}"))
         if cfg.void.enabled and src_choice != "baseline":
             figa.add_vrect(x0=cfg.void.depth * 1e6, x1=cfg.void.z_bottom * 1e6, fillcolor="magenta", opacity=0.12, line_width=0, annotation_text="void")
         figa.update_layout(xaxis_title="z [μm]", yaxis_title="ΔT [K]", height=400, legend=dict(orientation="h", y=-0.3), margin=dict(t=20))
@@ -675,18 +697,22 @@ if view == VIEWS[1]:
         res_r = void if (cfg.void.enabled and src_choice != "baseline") else base
         for k_i in np.linspace(0, len(res_r.times) - 1, 6).round().astype(int):
             rr = res_r.grid.r_c[:ir_p] * 1e6
-            yy = res_r.T_surface[k_i, :ir_p] - T0
-            figr.add_trace(go.Scatter(x=np.concatenate([-rr[::-1], rr]), y=np.concatenate([yy[::-1], yy]),
-                                      name=f"t={res_r.times[k_i] * tscale:.3g} {tunit}"))
+            if res_r.is_3d:                                   # T_surface already holds the (x, z=0) plane
+                nr_v = res_r.grid.nr
+                yy = res_r.T_surface[k_i, nr_v - ir_p: nr_v + ir_p] - T0
+            else:
+                y_half = res_r.T_surface[k_i, :ir_p] - T0
+                yy = np.concatenate([y_half[::-1], y_half])
+            figr.add_trace(go.Scatter(x=np.concatenate([-rr[::-1], rr]), y=yy, name=f"t={res_r.times[k_i] * tscale:.3g} {tunit}"))
         figr.update_layout(xaxis_title="r [μm]", yaxis_title="ΔT [K]", height=400, legend=dict(orientation="h", y=-0.3), margin=dict(t=20))
         st.plotly_chart(figr, use_container_width=True)
 
     if st.checkbox("3D 표면 플롯 (관심 영역, T(r,z) surface)", value=False):
         k3 = st.slider("3D 플롯 스냅샷", 0, len(fields) - 1, init, format="%d")
-        sub3 = field_at(frame_idx[k3])[:iz_p, :ir_p]
+        sub3 = plane_at(frame_idx[k3])[:iz_p, ir - ir_p: ir + ir_p]          # region of interest of the (x, z) plane
         fig3d = go.Figure(go.Surface(
             x=np.concatenate([-g_plot.r_c[:ir_p][::-1], g_plot.r_c[:ir_p]]) * 1e6, y=g_plot.z_c[:iz_p] * 1e6,
-            z=np.concatenate([sub3[:, ::-1], sub3], axis=1), colorscale=colorscale, cmin=0.0, cmax=gmax,
+            z=sub3, colorscale=colorscale, cmin=0.0, cmax=gmax,
         ))
         fig3d.update_layout(title=f"t = {frame_t[k3] * tscale:.3g} {tunit}",
                             scene=dict(xaxis_title="r [μm]", yaxis_title="z [μm]", zaxis_title="ΔT [K]"), height=600)
@@ -741,6 +767,9 @@ if view == VIEWS[2]:
         ("펄스 후 Δt 성장률 (스텝당)", f"{diag['dt_growth']:.2f}"),
         ("Fo = D·Δt/Δz² (펄스 중)", f"{diag['fo']:g}"),
         ("스텝 수 / 행렬 재분해 횟수", f"{diag['n_steps']:,} / {diag.get('n_factorisations', 1)}"),
+        ("계산 차원 (void 케이스)", f"3D (r, θ, z), nθ = {diag['n_theta']} (반원), 미지수 {diag['n_cells']:,}, {diag['solver']}"
+         + (f", 평균 반복 {diag['mean_iterations']:.1f}회" if diag.get("mean_iterations") else "")
+         if void.is_3d else "2D 축대칭 (r, z), 직접 LU"),
         ("관측창 기준", {"tau_p": "펄스폭 배수", "void": "void 깊이 기준 (d²/D 배수)", "absolute": "절대 시간"}[diag["t_end_mode"]]),
         ("셀 수 (nr × nz)", f"{diag['n_cells']:,} ({diag['nr']} × {diag['nz']})"),
         ("관측 시간창 t_end", fmt_time(diag["t_end"])),
