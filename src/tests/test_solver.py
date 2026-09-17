@@ -199,10 +199,11 @@ def test_energy_conservation(profile, k_void):
     res = run_simulation(make_cfg(2, profile=profile, k_void=k_void))
     assert abs(res.energy_error) < 1e-9
     assert res.energy_error_max < 1e-9
-    # absorbed energy = E (1-R) * fraction of the Gaussian inside the rod
+    # absorbed energy = E (1-R) * fraction of the Gaussian inside the rod.  abs=0: pytest.approx's default
+    # absolute tolerance (1e-12) would otherwise hide a 2e-4 relative deficit on nJ-scale energies.
     la = res.config.laser
     frac = 1 - math.exp(-2 * res.config.geometry.R_cu ** 2 / la.w ** 2)
-    assert res.E_in[-1] == pytest.approx(la.energy * (1 - la.reflectivity) * frac, rel=1e-9)
+    assert res.E_in[-1] == pytest.approx(la.energy * (1 - la.reflectivity) * frac, rel=1e-9, abs=0)
 
 
 # ----------------------------------------------------------------------------- analytic solution

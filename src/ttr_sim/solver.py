@@ -97,13 +97,23 @@ class Laser:
     def sigma(self) -> float:
         return self.tau_p / (2.0 * math.sqrt(2.0 * math.log(2.0)))
 
+    @property
+    def gauss_norm(self) -> float:
+        """Renormalisation of the Gaussian truncated at t = 0 so that its integral over [0, inf) is exactly
+        tau_p (the tail before t = 0, Phi(-t_center/sigma) ~ 2e-4, is folded back into the pulse)."""
+        from scipy.special import erf
+        tail = 0.5 * (1.0 + erf(-self.t_center / (self.sigma * math.sqrt(2.0))))
+        return 1.0 / (1.0 - tail)
+
     def f(self, t):
-        """Temporal profile normalised so that the integral of f dt = tau_p (same fluence for both shapes)."""
+        """Temporal profile normalised so that the integral of f dt over t >= 0 equals tau_p (same fluence for
+        both shapes).  The Gaussian is zero for t < 0 and renormalised for the truncated tail."""
         t = np.asarray(t, dtype=float)
         if self.profile == "square":
             return ((t >= 0.0) & (t < self.tau_p)).astype(float)
         s = self.sigma
-        return self.tau_p / (s * math.sqrt(2.0 * math.pi)) * np.exp(-0.5 * ((t - self.t_center) / s) ** 2)
+        g = self.tau_p / (s * math.sqrt(2.0 * math.pi)) * np.exp(-0.5 * ((t - self.t_center) / s) ** 2)
+        return self.gauss_norm * np.where(t >= 0.0, g, 0.0)
 
     def f_mean(self, t0, t1):
         """Exact average of f over [t0, t1] (the Crank-Nicolson source uses the step-averaged flux,
@@ -115,7 +125,7 @@ class Laser:
             return overlap / (t1 - t0)
         from scipy.special import erf
         s = self.sigma
-        F = lambda t: 0.5 * self.tau_p * erf((t - self.t_center) / (s * math.sqrt(2.0)))  # noqa: E731
+        F = lambda t: 0.5 * self.tau_p * self.gauss_norm * erf((np.maximum(t, 0.0) - self.t_center) / (s * math.sqrt(2.0)))  # noqa: E731
         return (F(t1) - F(t0)) / (t1 - t0)
 
     def fprime(self, t):
