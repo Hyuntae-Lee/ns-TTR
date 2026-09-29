@@ -156,6 +156,7 @@ class _Solver:
     """Direct (SuperLU) or ILU-preconditioned BiCGSTAB solve of A x = b, rebuilt per dt."""
 
     def __init__(self, A: sp.csc_matrix, direct: bool):
+        # A = C/dt + theta * L  (theta = 0.5 Crank-Nicolson, 1.0 backward Euler after a source discontinuity)
         self.direct = direct
         self.n_iter = []
         if direct:
@@ -263,21 +264,22 @@ def run_simulation_3d(
 
     record(0)
     direct = N <= DIRECT_MAX_UNKNOWNS
-    solver, B, dt_cur, n_factor = None, None, None, 0
+    thetas = cfg.theta_schedule(times)
+    solver, B, key_cur, n_factor = None, None, None, 0
     report_every = max(1, n_steps // 100)
     for n in range(n_steps):
-        dt = dts[n]
-        if dt_cur is None or abs(dt - dt_cur) > 1e-12 * dt_cur:
-            A = (Cdiag * (1.0 / dt) + 0.5 * Lap).tocsc()
-            B = (Cdiag * (1.0 / dt) - 0.5 * Lap).tocsr()
+        dt, theta = dts[n], thetas[n]
+        if key_cur is None or abs(dt - key_cur[0]) > 1e-12 * key_cur[0] or theta != key_cur[1]:
+            A = (Cdiag * (1.0 / dt) + theta * Lap).tocsc()
+            B = (Cdiag * (1.0 / dt) - (1.0 - theta) * Lap).tocsr()
             solver = _Solver(A, direct)
-            dt_cur = dt
+            key_cur = (dt, theta)
             n_factor += 1
         rhs = B @ T + src * f_mean[n]
         T_old = T
         T = solver.solve(rhs, T)
         E_in[n + 1] = E_in[n] + 2.0 * f_mean[n] * src_total * dt
-        E_out[n + 1] = E_out[n] + 2.0 * dt * float(g_sink @ (0.5 * (T_old + T)))
+        E_out[n + 1] = E_out[n] + 2.0 * dt * float(g_sink @ (theta * T + (1.0 - theta) * T_old))
         record(n + 1)
         if progress is not None and (n % report_every == 0 or n == n_steps - 1):
             progress((n + 1) / n_steps)

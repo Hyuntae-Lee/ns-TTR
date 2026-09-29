@@ -293,6 +293,21 @@ st.markdown(
       [class*="st-key-fixed_"] [data-testid="stPlotlyChart"], [class*="st-key-fixed_"] .js-plotly-plot,
       [class*="st-key-fixed_"] .plot-container { width: 100% !important; min-width: 100% !important; }
       section.stMain .block-container, [data-testid="stMainBlockContainer"] { overflow-x: auto; }
+      /* view selector bar: fixed at the top of the main area, styled as tab buttons */
+      .st-key-view_bar {
+        position: fixed !important; top: 0; left: 30rem; right: 0; z-index: 999; width: auto !important;
+        background: #ffffff; border-bottom: 1px solid #e3e6ec; padding: 0.55rem 2rem 0.5rem 2rem; box-sizing: border-box;
+      }
+      .st-key-view_bar [role="radiogroup"] { gap: 0.5rem; }
+      .st-key-view_bar label { border: 1px solid #e3e6ec; border-radius: 999px; padding: 0.3rem 0.95rem; background: #f7f8fa;
+                               margin: 0 !important; cursor: pointer; }
+      .st-key-view_bar label > div:first-child { display: none !important; }            /* hide the radio circle */
+      .st-key-view_bar label:has(input:checked) { background: #d62728; border-color: #d62728; }
+      .st-key-view_bar label:has(input:checked) p { color: #ffffff !important; font-weight: 700; }
+      /* Streamlit's own header stays clickable (Deploy / menu) but no longer covers the bar */
+      header[data-testid="stHeader"] { background: transparent !important; pointer-events: none; }
+      header[data-testid="stHeader"] [data-testid="stToolbar"] { pointer-events: auto; }
+      [data-testid="stMainBlockContainer"] { padding-top: 4.5rem !important; }
       /* temperature map: the single reset icon sits top-right inside the plot, translucent until hovered */
       .js-plotly-plot .modebar { opacity: 0.45; transition: opacity 0.15s; }
       .js-plotly-plot .modebar:hover { opacity: 1; }
@@ -305,6 +320,13 @@ st.markdown(
       section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button {
         border-radius: 12px; font-weight: 700; font-size: 1.1rem; padding: 0.7rem 0;
       }
+      /* the apply button is pinned to the bottom-left of the screen (bottom edge of the settings panel) */
+      section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] {
+        position: fixed !important; left: 0; bottom: 0; width: 30rem !important; z-index: 1000;
+        padding: 0.7rem 1.1rem 0.8rem 1.1rem; box-sizing: border-box;
+        background: #f0f2f6; border-top: 1px solid #e3e6ec; box-shadow: 0 -4px 10px rgba(0,0,0,0.05);
+      }
+      section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding-bottom: 6rem !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -509,6 +531,12 @@ if apply:
     finally:
         bar.empty()
 
+# ---- view selector: pinned to the top of the screen and always visible (even before the first run).
+# A radio (not st.tabs) so the selected view survives the rerun triggered by the test buttons.
+VIEWS = ["📈 신호", "🌡 온도장", "✅ 검증 지표", "🔬 Grid convergence"]
+with st.container(key="view_bar"):
+    view = st.radio("보기", VIEWS, horizontal=True, key="view", label_visibility="collapsed")
+
 res = st.session_state.result
 if res is None:
     st.info("왼쪽 패널에서 프리셋과 void 형상을 선택한 뒤 **적용** 을 누르세요.")
@@ -553,9 +581,6 @@ for w in diag["warnings"]:
 if not cfg.void.enabled:
     st.info("void 가 비활성화되어 있어 신호 지표는 0 입니다 (baseline 만 계산).")
 
-# A radio (not st.tabs) so the selected view survives the rerun triggered by the test buttons.
-VIEWS = ["📈 신호", "🌡 온도장", "✅ 검증 지표", "🔬 Grid convergence"]
-view = st.radio("보기", VIEWS, horizontal=True, key="view", label_visibility="collapsed")
 
 # ----------------------------------------------------------------------------- signal tab
 if view == VIEWS[0]:

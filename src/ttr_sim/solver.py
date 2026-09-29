@@ -289,6 +289,19 @@ class SimConfig:
         times[-1] = t_end
         return times
 
+    def theta_schedule(self, times: np.ndarray, n_damp: int = 4) -> np.ndarray:
+        """Implicitness theta per step: 0.5 (Crank-Nicolson) everywhere except the `n_damp` steps that follow a
+        discontinuity of the source (square pulse switching on at t = 0 and off at t = tau_p), which use
+        theta = 1 (backward Euler).  Crank-Nicolson is not L-stable: in cells that are fine compared with
+        sqrt(D dt) it does not damp the high-frequency error excited by a jump in the flux, it only flips its
+        sign every step (ringing).  A few strongly damping steps remove it (Rannacher start-up)."""
+        th = np.full(len(times) - 1, 0.5)
+        if self.laser.profile == "square":
+            for t_disc in (0.0, self.laser.tau_p):
+                i = max(0, int(np.searchsorted(times, t_disc, side="right")) - 1)      # step containing the jump
+                th[i:i + n_damp] = 1.0
+        return th
+
     @property
     def n_steps(self) -> int:
         return len(self.time_grid()) - 1
@@ -766,11 +779,12 @@ def run_simulation(
     times = cfg.time_grid()
     dts = np.diff(times)
 
-    lu, B, dt_cur, n_factor = None, None, None, 0
+    thetas = cfg.theta_schedule(times)
+    lu, B, key_cur, n_factor = None, None, None, 0
 
-    def factorise(dt):
-        A = (Cdiag * (1.0 / dt) + 0.5 * Lap).tocsc()
-        return spla.splu(A), (Cdiag * (1.0 / dt) - 0.5 * Lap).tocsr()
+    def factorise(dt, theta):
+        A = (Cdiag * (1.0 / dt) + theta * Lap).tocsc()
+        return spla.splu(A), (Cdiag * (1.0 / dt) - (1.0 - theta) * Lap).tocsr()
 
     # surface source (W per cell at f = 1): copper cells of the j = 0 row
     la = cfg.laser
@@ -822,17 +836,17 @@ def run_simulation(
     src_total = src.sum()
     f_mean = la.f_mean(times[:-1], times[1:])       # exact step-averaged pulse profile
     for n in range(n_steps):
-        dt = dts[n]
-        if dt_cur is None or abs(dt - dt_cur) > 1e-12 * dt_cur:
-            lu, B = factorise(dt)                   # one LU per constant-dt block
-            dt_cur = dt
+        dt, theta = dts[n], thetas[n]
+        if key_cur is None or abs(dt - key_cur[0]) > 1e-12 * key_cur[0] or theta != key_cur[1]:
+            lu, B = factorise(dt, theta)            # one LU per constant (dt, theta) block
+            key_cur = (dt, theta)
             n_factor += 1
         f_half = f_mean[n]
         rhs = B @ T + src * f_half
         T_old = T
         T = lu.solve(rhs)
         E_in[n + 1] = E_in[n] + f_half * src_total * dt
-        E_out[n + 1] = E_out[n] + dt * float(g_sink @ (0.5 * (T_old + T)))      # Crank-Nicolson consistent
+        E_out[n + 1] = E_out[n] + dt * float(g_sink @ (theta * T + (1.0 - theta) * T_old))   # consistent with the theta scheme
         record(n + 1)
         if progress is not None and (n % report_every == 0 or n == n_steps - 1):
             progress((n + 1) / n_steps)
