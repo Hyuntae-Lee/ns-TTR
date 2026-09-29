@@ -15,7 +15,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from scipy.interpolate import RegularGridInterpolator
 
-from ttr_sim import DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec
+from ttr_sim import BottomStack, DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec
 from ttr_sim.analytic import center_step_response
 from ttr_sim.materials import (
     AIR, COPPER, COPPER_ABSORPTION_DEPTH, COPPER_C_TR_PROBE, COPPER_REFLECTIVITY_DEFAULT, FUSED_SILICA,
@@ -137,7 +137,8 @@ def preset_defaults(idx: int) -> dict:
     d_um = p.d_rep * 1e6
     return dict(
         void_depth_um=d_um,
-        void_thickness_um=max(round(0.5 * d_um, 3), round(2 * p.dz * 1e6, 3)),
+        # half the depth, but never reaching past the rod's back face (keeps the deepest preset inside the rod)
+        void_thickness_um=round(min(0.5 * d_um, 0.5 * (500.0 - d_um)), 3),
         void_r_um=min(round(2 * d_um, 3), 40.0),
         energy_nJ=default_energy_nJ(p.tau_p),
         t_end_us=default_window_us(p, d_um),
@@ -177,7 +178,7 @@ def build_config() -> SimConfig:
         shape="ellipse",                                  # fixed: spheroidal void (bubble-like)
     )
     laser = Laser(
-        tau_p=p.tau_p, profile="gaussian", energy=s.energy_nJ * 1e-9, w=s.spot_um * UM,
+        tau_p=p.tau_p, profile="square", energy=s.energy_nJ * 1e-9, w=s.spot_um * UM,
         reflectivity=s.reflectivity, probe_w=s.probe_um * UM, c_tr=float(s.get("c_tr", COPPER_C_TR_PROBE)),
     )
     numerics = Numerics(
@@ -187,7 +188,11 @@ def build_config() -> SimConfig:
         dt_growth=1.0 + float(s.get("dt_growth_pct", 5.0)) / 100.0, n_snapshots=int(s.get("n_snapshots", 12)),   # stretch: fixed 1.15
     )
     geometry = Geometry()      # real Cu-in-silica geometry; the homogeneous-copper validation mode lives in the tests only
-    return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics)
+    bottom = BottomStack(          # below the rod: oxide layer -> thermal pad -> heat sink at ambient temperature
+        oxide_thickness=float(s.get("ox_nm", 5.0)) * 1e-9, oxide_k=float(s.get("ox_k", 4.5)),
+        pad_thickness=float(s.get("pad_um", 200.0)) * UM, pad_k=float(s.get("pad_k", 62.5)),
+    )
+    return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics, bottom=bottom)
 
 
 def progress_ui(container):
@@ -350,7 +355,7 @@ with st.sidebar:
         with st.container(border=True):
             card_header(4, "레이저")
             st.markdown(
-                f'<div class="card-body muted">펌프: {PUMP_WAVELENGTH_NM:g} nm 펄스, Gaussian (FWHM = τp) · '
+                f'<div class="card-body muted">펌프: {PUMP_WAVELENGTH_NM:g} nm 펄스, 사각 (폭 = τp) · '
                 f'프로브: {PROBE_WAVELENGTH_NM:g} nm CW</div>',
                 unsafe_allow_html=True,
             )
@@ -370,6 +375,20 @@ with st.sidebar:
                      "(열 계산에는 영향 없음). 구리는 630 nm 근처에서 약 −1 ~ −2 ×10⁻⁴ /K 로 보고되며 표면 상태에 따라 수십 % 달라지므로, "
                      "절대값이 중요하면 기준 시료로 보정한 값을 넣으세요.",
             )
+
+        # ---- card 5: layers below the rod
+        with st.container(border=True):
+            card_header(5, "후면 (산화막 + 열패드)")
+            st.markdown('<div class="card-body muted">구리 아래: 산화막 → 열패드 → 히트싱크(실온 고정)</div>', unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            c1.number_input("산화막 두께 [nm]", min_value=0.0, max_value=50000.0, value=5.0, step=1.0, key="ox_nm", format="%.4g",
+                            help="공기 중 방치로 생긴 구리 자연 산화막은 보통 2~10 nm 입니다 (기본 5 nm). 200 nm 미만은 격자로 나누지 않고 "
+                                 "계면 열저항(두께/열전도율)으로 넣습니다. 0 이면 산화막 없이 열패드가 바로 닿습니다.")
+            c2.number_input("산화막 열전도율 [W/m·K]", min_value=0.01, max_value=400.0, value=4.5, step=0.1, key="ox_k", format="%.3g",
+                            help="Cu₂O 약 4.5 W/m·K (가정값). 체적 열용량은 2.7 MJ/m³K 로 고정.")
+            c1.number_input("열패드 두께 [μm]", min_value=1.0, max_value=5000.0, value=200.0, step=10.0, key="pad_um", format="%.4g")
+            c2.number_input("열패드 열전도율 [W/m·K]", min_value=0.01, max_value=400.0, value=62.5, step=0.5, key="pad_k", format="%.4g",
+                            help="체적 열용량은 2.0 MJ/m³K 로 가정. 패드의 먼 쪽 면은 실온으로 고정된 히트싱크입니다.")
 
         # ---- advanced numerics (collapsed card)
         with st.expander("고급 수치 설정"):
@@ -498,7 +517,7 @@ if res is None:
         **모델 요약**
         - 축대칭 (r, z) 열확산 `ρc ∂T/∂t = ∇·(k∇T)`, 유한체적 + Crank–Nicolson (SuperLU 1회 분해)
         - 레이저: Beer–Lambert 흡수를 표면 flux `-k ∂T/∂z = I₀(1-R) f(t) e^{-2r²/w²}` 로 처리 (Δz ≫ 흡수깊이 조건 확인)
-        - 경계: 축 대칭, 구리/실리카 계면 온도·flux 연속, 후면(z=500 μm)·외곽 단열
+        - 경계: 축 대칭, 구리/실리카 계면 온도·flux 연속, 외곽 단열, 후면(z=500 μm) 아래에 산화막 + 열패드 + 히트싱크(실온)
         - 신호: 프로브 가중 표면 온도의 void 유/무 차이 ΔT(t) 와 상대 대비 ΔT/ΔT_baseline
         """
     )
@@ -748,16 +767,20 @@ if view == VIEWS[2]:
     fe = go.Figure()
     fe.add_trace(go.Scatter(x=void.times * tscale, y=void.E_in * 1e9, name="입력(흡수) 에너지", line=dict(color="orange")))
     fe.add_trace(go.Scatter(x=void.times * tscale, y=void.E_stored * 1e9, name="저장 열에너지 Σρc·V·ΔT", line=dict(color="#1f77b4", dash="dot")))
+    fe.add_trace(go.Scatter(x=void.times * tscale, y=void.E_lost * 1e9, name="히트싱크로 빠져나간 에너지", line=dict(color="#2ca02c")))
+    fe.add_trace(go.Scatter(x=void.times * tscale, y=(void.E_stored + void.E_lost) * 1e9, name="저장 + 방출 (입력과 겹쳐야 함)",
+                            line=dict(color="black", dash="dash", width=1)))
     fe.update_layout(xaxis_title=f"t [{tunit}]", yaxis_title="E [nJ]", height=320, legend=dict(orientation="h", y=-0.25))
     st.plotly_chart(fe, use_container_width=True)
     st.caption(
-        "모든 경계가 단열(표면 flux 제외)이고 유한체적 이산화가 보존적이므로 이 오차는 행렬 조립 + 선형해 정밀도(~1e-13)를 반영합니다."
+        "에너지 수지: 흡수 에너지 = 저장 열에너지 + 후면 히트싱크로 빠져나간 에너지. 다른 경계는 모두 단열이고 유한체적 이산화가 보존적이므로 "
+        "이 오차는 행렬 조립 + 선형해 정밀도(~1e-13)를 반영합니다."
     )
     with st.expander("에너지 보존 지표 읽는 법", expanded=False):
         st.markdown(
             """
-**무엇을 비교하나** 레이저가 구리 표면에 넣어준 에너지(흡수 flux의 시간 적분)와, 계산 영역 전체에 저장된 열에너지 Σρc·V·ΔT를
-매 스텝 비교합니다. 표면 flux 말고는 모든 경계가 단열이므로 두 값은 이론적으로 정확히 같아야 합니다.
+**무엇을 비교하나** 레이저가 구리 표면에 넣어준 에너지(흡수 flux의 시간 적분)와, 계산 영역 전체에 저장된 열에너지 Σρc·V·ΔT 에
+후면 히트싱크로 빠져나간 에너지를 더한 값을 매 스텝 비교합니다. 그 외 경계는 모두 단열이므로 두 값은 이론적으로 정확히 같아야 합니다.
 
 **정상 범위**
 
@@ -797,6 +820,10 @@ if view == VIEWS[2]:
         ("Δz / 광학 흡수깊이 (≥7 필요)", f"{diag['flux_ratio']:.1f}  (δ_abs = {COPPER_ABSORPTION_DEPTH * 1e9:.0f} nm)"),
         ("피크 흡수 flux I₀(1−R)", f"{diag['q_abs_peak']:.3g} W/m²"),
         ("피크 입사 fluence I₀·τp", f"{diag['fluence_peak']:.3g} J/m²"),
+        ("후면 적층", f"산화막 {cfg.bottom.oxide_thickness * 1e9:.3g} nm (k = {cfg.bottom.oxide_k:g}, "
+                     f"{'격자로 분해' if cfg.bottom.oxide_resolved else f'계면 열저항 {cfg.bottom.oxide_resistance:.2e} m²K/W'}) + 열패드 "
+                     f"{cfg.bottom.pad_thickness * 1e6:.4g} μm (k = {cfg.bottom.pad_k:g} W/m·K) + 히트싱크(실온)"),
+        ("히트싱크로 빠져나간 에너지 (관측창 끝)", f"{void.E_lost[-1] / void.E_in[-1] * 100:.2f} % of 흡수 에너지"),
         ("계산 시간 (baseline + void)", f"{base.wall_time + void.wall_time:.1f} s"),
     ]
     st.table(pd.DataFrame(rows, columns=["항목", "값"]).set_index("항목"))

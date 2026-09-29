@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ttr_sim import DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec, build_grid, run_simulation  # noqa: E402
+from ttr_sim import BottomStack, DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec, build_grid, run_simulation  # noqa: E402
 from ttr_sim.analytic import center_step_response, surface_step_response  # noqa: E402
 from ttr_sim.materials import COPPER, FUSED_SILICA  # noqa: E402
 from ttr_sim.solver import MAT_SILICA, MAT_VOID, baseline_config, material_map, void_signal  # noqa: E402
@@ -55,7 +55,7 @@ def test_grid_faces_align_with_interfaces():
     assert np.any(np.isclose(g.z_faces, cfg.void.depth))
     assert np.any(np.isclose(g.z_faces, cfg.void.z_bottom))
     assert np.any(np.isclose(g.r_faces, cfg.void.r_outer))
-    assert g.z_faces[-1] == pytest.approx(cfg.geometry.L)
+    assert g.z_faces[-1] == pytest.approx(cfg.z_total) and np.any(np.isclose(g.z_faces, cfg.geometry.L))
     assert np.all(np.diff(g.r_faces) > 0) and np.all(np.diff(g.z_faces) > 0)
     mat = material_map(cfg, g)
     assert (mat == MAT_VOID).any() and (mat == MAT_SILICA).any()
@@ -134,7 +134,7 @@ def test_grid_zones_resolve_void_automatically():
     assert np.any(np.isclose(g.r_faces, cfg.void.r_half)) and np.any(np.isclose(g.r_faces, cfg.geometry.R_cu))
     assert np.all(np.diff(g.z_faces) > 0) and np.all(np.diff(g.r_faces) > 0)
     assert g.n_cells < 60_000                                     # zoning keeps the grid small
-    assert g.z_faces[-1] == pytest.approx(cfg.geometry.L)
+    assert g.z_faces[-1] == pytest.approx(cfg.z_total) and np.any(np.isclose(g.z_faces, cfg.geometry.L))
 
 
 def test_3d_reproduces_2d_for_on_axis_void():
@@ -277,3 +277,64 @@ def test_grid_convergence():
     assert abs(cur["d_peak_dT"]) < 0.05
     assert abs(dth["d_peak_dT"]) < abs(conv["comparisons"]["coarse"]["d_peak_dT"]) + 1e-12
     assert conv["order"] is None or conv["order"] > 1.0
+
+# ----------------------------------------------------------------------------- bottom stack (oxide + thermal pad + heat sink)
+def _cfg_deep(stack):
+    p = DEPTH_PRESETS[8]   # 2.76 ms pulse: heat reaches the back face within the window
+    return SimConfig(
+        geometry=Geometry(),
+        void=VoidSpec(enabled=True, depth=300e-6, thickness=50e-6, r_half=40e-6, k=0.026),
+        laser=Laser(tau_p=p.tau_p, energy=1e-6, w=10e-6, probe_w=5e-6),
+        numerics=Numerics(dz=p.dz, n_snapshots=4), bottom=stack,
+    )
+
+
+def test_bottom_stack_grid_and_materials():
+    from ttr_sim.solver import MAT_OXIDE, MAT_PAD
+    cfg = _cfg_deep(BottomStack(oxide_thickness=1e-6))          # thick oxide: resolved as its own cells
+    assert cfg.bottom.oxide_resolved and cfg.bottom.oxide_resistance == 0.0
+    g = build_grid(cfg)
+    mat = material_map(cfg, g)
+    L, b = cfg.geometry.L, cfg.bottom
+    assert g.z_faces[-1] == pytest.approx(L + b.oxide_thickness + b.pad_thickness)
+    assert np.any(np.isclose(g.z_faces, L)) and np.any(np.isclose(g.z_faces, L + b.oxide_thickness))
+    ox, pad = (mat[:, 0] == MAT_OXIDE), (mat[:, 0] == MAT_PAD)
+    assert ox.sum() >= 4 and pad.sum() >= 8
+    assert (g.dz_c[ox].sum()) == pytest.approx(b.oxide_thickness) and (g.dz_c[pad].sum()) == pytest.approx(b.pad_thickness)
+    assert (mat[ox][:, -1] == MAT_OXIDE).all() and (mat[pad][:, -1] == MAT_PAD).all()     # layers span the whole radius
+    assert build_grid(_cfg_deep(BottomStack(enabled=False))).z_faces[-1] == pytest.approx(L)
+
+
+def test_native_oxide_is_an_interface_resistance():
+    """Default (native, 5 nm) oxide: no oxide cells, resistance t/k on the face at z = L, negligible effect."""
+    from ttr_sim.solver import MAT_OXIDE, interface_resistance
+    cfg = _cfg_deep(BottomStack())
+    b = cfg.bottom
+    assert not b.oxide_resolved and b.oxide_resistance == pytest.approx(5e-9 / 4.5)
+    g = build_grid(cfg)
+    assert g.z_faces[-1] == pytest.approx(cfg.geometry.L + b.pad_thickness) and not (material_map(cfg, g) == MAT_OXIDE).any()
+    extra = interface_resistance(cfg, g)
+    assert (extra > 0).sum() == 1 and g.z_faces[1:-1][extra > 0][0] == pytest.approx(cfg.geometry.L)
+    with_ox = run_simulation(cfg)
+    no_ox = run_simulation(_cfg_deep(BottomStack(oxide_thickness=0.0)))
+    assert abs(with_ox.energy_error) < 1e-9
+    assert np.allclose(with_ox.dT_probe, no_ox.dT_probe, rtol=1e-3, atol=1e-9)      # nm oxide is thermally negligible
+
+
+def test_interface_and_resolved_oxide_agree():
+    """Just below / above the switch-over thickness the two treatments must give the same answer."""
+    thin = run_simulation(_cfg_deep(BottomStack(oxide_thickness=0.19e-6, oxide_k=0.5)))     # interface resistance
+    thick = run_simulation(_cfg_deep(BottomStack(oxide_thickness=0.21e-6, oxide_k=0.5)))    # resolved cells
+    assert not thin.config.bottom.oxide_resolved and thick.config.bottom.oxide_resolved
+    assert np.allclose(thin.dT_probe, thick.dT_probe, rtol=2e-2, atol=1e-9)
+    assert thin.E_lost[-1] == pytest.approx(thick.E_lost[-1], rel=0.05)
+
+
+def test_bottom_stack_energy_balance_and_cooling():
+    sink = run_simulation(_cfg_deep(BottomStack(sink="isothermal")))
+    adia = run_simulation(_cfg_deep(BottomStack(sink="adiabatic")))
+    assert abs(sink.energy_error) < 1e-9 and sink.energy_error_max < 1e-9       # stored + lost = absorbed
+    assert abs(adia.energy_error) < 1e-9
+    assert sink.E_lost[-1] > 0.05 * sink.E_in[-1] and adia.E_lost[-1] == 0.0   # the sink removes heat
+    assert np.all(np.diff(sink.E_lost) >= -1e-30)
+    assert sink.dT_probe[-1] < adia.dT_probe[-1]                                  # and cools the surface at late times

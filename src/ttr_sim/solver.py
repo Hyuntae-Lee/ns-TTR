@@ -33,8 +33,8 @@ import scipy.sparse.linalg as spla
 
 from .materials import Material, COPPER, FUSED_SILICA, AIR, COPPER_ABSORPTION_DEPTH
 
-MAT_COPPER, MAT_SILICA, MAT_VOID = 0, 1, 2
-MAT_NAMES = {MAT_COPPER: "Copper", MAT_SILICA: "Fused silica", MAT_VOID: "Void"}
+MAT_COPPER, MAT_SILICA, MAT_VOID, MAT_OXIDE, MAT_PAD = 0, 1, 2, 3, 4
+MAT_NAMES = {MAT_COPPER: "Copper", MAT_SILICA: "Fused silica", MAT_VOID: "Void", MAT_OXIDE: "Oxide layer", MAT_PAD: "Thermal pad"}
 
 
 # ----------------------------------------------------------------------------- configuration
@@ -43,6 +43,45 @@ class Geometry:
     R_cu: float = 40e-6          # copper cylinder radius, m
     L: float = 500e-6            # copper cylinder length, m
     homogeneous_copper: bool = False   # validation mode: replace silica by copper (semi-infinite analogue)
+
+
+@dataclass
+class BottomStack:
+    """Layers below the rod (z > L): oxide layer, then a thermal pad, then the mounting stage.
+
+    The stack spans the whole bottom face (under the copper and the silica).  With `sink` = "isothermal"
+    the far side of the pad is held at the ambient temperature (heat sink); "adiabatic" insulates it.
+    `enabled=False` restores the old model (adiabatic face directly at z = L).
+    """
+    enabled: bool = True
+    oxide_thickness: float = 5e-9       # m; native copper oxide formed in air is a few nm (2-10 nm)
+    oxide_k: float = 4.5                # W/(m K), Cu2O
+    oxide_rho_cp: float = 2.7e6         # J/(m^3 K), Cu2O (6000 kg/m^3 x 450 J/kg K)
+    pad_thickness: float = 200e-6       # m
+    pad_k: float = 62.5                 # W/(m K)
+    pad_rho_cp: float = 2.0e6           # J/(m^3 K) (assumed)
+    sink: str = "isothermal"            # "isothermal" | "adiabatic"
+
+    RESOLVE_ABOVE = 0.2e-6              # oxide layers thinner than this are an interface resistance, not grid cells
+
+    @property
+    def oxide_resolved(self) -> bool:
+        """True: the oxide is discretised as its own cells; False: it enters as the interface thermal
+        resistance t/k between the rod and the pad (its heat capacity is negligible at this thickness)."""
+        return self.enabled and self.oxide_thickness >= self.RESOLVE_ABOVE
+
+    @property
+    def oxide_resistance(self) -> float:
+        """Area-specific thermal resistance of an unresolved oxide layer, m^2 K / W."""
+        return (self.oxide_thickness / self.oxide_k) if (self.enabled and not self.oxide_resolved) else 0.0
+
+    @property
+    def oxide_cells_thickness(self) -> float:
+        return self.oxide_thickness if self.oxide_resolved else 0.0
+
+    @property
+    def thickness(self) -> float:
+        return (self.oxide_cells_thickness + self.pad_thickness) if self.enabled else 0.0
 
 
 @dataclass
@@ -167,6 +206,12 @@ class SimConfig:
     numerics: Numerics
     copper: Material = COPPER
     silica: Material = FUSED_SILICA
+    bottom: BottomStack = field(default_factory=BottomStack)
+
+    @property
+    def z_total(self) -> float:
+        """Axial extent of the computational domain: rod length plus the bottom stack."""
+        return self.geometry.L + self.bottom.thickness
 
     # -- derived quantities used by both the solver and the GUI
     @property
@@ -263,7 +308,9 @@ class SimConfig:
         L_diff_si = math.sqrt(self.silica.alpha * self.t_end)
         flux_ratio = n.dz / COPPER_ABSORPTION_DEPTH
         warnings = []
-        if L_diff > 0.8 * g.L:
+        # The back-face warning applies only to the old model (adiabatic face at z = L).  With the bottom
+        # stack the back side is modelled physically, so deep targets need no warning.
+        if L_diff > 0.8 * g.L and not self.bottom.enabled:
             warnings.append(
                 f"열 침투 깊이 sqrt(D*t_end) = {L_diff * 1e6:.0f} μm 가 로드 길이의 80%({0.8 * g.L * 1e6:.0f} μm)를 넘습니다. "
                 "후면 단열 경계조건이 결과에 영향을 줍니다."
@@ -279,7 +326,8 @@ class SimConfig:
         if n.t_end_mode == "absolute" and n.t_end_abs < la.pulse_end * 1.05 * (1 - 1e-9):
             warnings.append(
                 f"입력한 관측 시간창 {n.t_end_abs * 1e6:.3g} μs 가 펄스 지속 시간(≈{la.pulse_end / la.tau_p:.1f}·τp = {la.pulse_end * 1e6:.3g} μs, "
-                f"Gaussian 중심 1.5·τp ± 3σ)보다 짧아 {self.t_end * 1e6:.3g} μs 로 늘렸습니다. 관측창은 펄스가 끝나기 전에 멈출 수 없습니다."
+                f"{'Gaussian 중심 1.5·τp ± 3σ' if la.profile == 'gaussian' else '사각 펄스 폭'})보다 짧아 {self.t_end * 1e6:.3g} μs 로 늘렸습니다. "
+                f"관측창은 펄스가 끝나기 전에 멈출 수 없습니다."
             )
         if self.void.enabled:
             t_peak_est = la.t_center + 2.0 * self.void.depth ** 2 / self.copper.alpha
@@ -509,7 +557,16 @@ def build_grid(cfg: SimConfig) -> Grid:
     if v.thickness > 0 and v.depth < g.L:            # zone kept even for the baseline (same grid)
         m = min(v.thickness, 5.0 * dz_v)
         zones_z = _insert_zone(zones_z, (max(0.0, v.depth - m), min(g.L, v.z_bottom + m), dz_v, [v.depth, v.z_bottom]))
-    z_faces = _zoned_axis(zones_z, g.L, n.stretch)
+    b = cfg.bottom
+    if b.enabled:
+        # bottom stack: faces exactly at z = L and at the oxide/pad interface; thin oxide resolved by 4 cells,
+        # pad resolved by >= 8 cells near the rod and stretched towards the heat sink
+        z_ox = g.L + b.oxide_cells_thickness
+        if b.oxide_resolved:
+            zones_z = _insert_zone(zones_z, (g.L, z_ox, b.oxide_thickness / 4.0, []))
+        d_pad = b.pad_thickness / 8.0
+        zones_z = _insert_zone(zones_z, (z_ox, z_ox + 2.0 * d_pad, d_pad, []))
+    z_faces = _zoned_axis(zones_z, cfg.z_total, n.stretch)
 
     # ---- radial zones inside the copper
     r_s = min(g.R_cu, 2.0 * la.w)
@@ -553,6 +610,11 @@ def material_map(cfg: SimConfig, grid: Grid) -> np.ndarray:
             inside = in_box
         inside = inside & (rc < cfg.geometry.R_cu)
         mat[np.broadcast_to(inside, mat.shape)] = MAT_VOID
+    b = cfg.bottom
+    if b.enabled:                                    # layers below the rod span the whole radius
+        z_ox = cfg.geometry.L + b.oxide_cells_thickness
+        mat[(grid.z_c > cfg.geometry.L) & (grid.z_c < z_ox), :] = MAT_OXIDE
+        mat[grid.z_c >= z_ox, :] = MAT_PAD
     return mat
 
 
@@ -563,6 +625,8 @@ def _property_arrays(cfg: SimConfig, mat: np.ndarray):
         MAT_COPPER: (cfg.copper.k, cfg.copper.rho_cp),
         MAT_SILICA: (cfg.silica.k, cfg.silica.rho_cp),
         MAT_VOID: (cfg.void.k, cfg.void.rho_cp),
+        MAT_OXIDE: (cfg.bottom.oxide_k, cfg.bottom.oxide_rho_cp),
+        MAT_PAD: (cfg.bottom.pad_k, cfg.bottom.pad_rho_cp),
     }
     for mid, (kk, rc) in table.items():
         sel = mat == mid
@@ -571,8 +635,20 @@ def _property_arrays(cfg: SimConfig, mat: np.ndarray):
     return k, rho_cp
 
 
-def assemble_laplacian(grid: Grid, k: np.ndarray) -> sp.csr_matrix:
-    """Conductance Laplacian L (W/K) such that heat flow out of cell p = (L T)_p."""
+def interface_resistance(cfg: "SimConfig", grid: "Grid") -> np.ndarray:
+    """Extra area-specific resistance (m^2 K/W) on each interior z-face, shape (nz - 1,): the unresolved
+    oxide layer sits on the face at z = L between the rod and the thermal pad."""
+    extra = np.zeros(grid.nz - 1)
+    R = cfg.bottom.oxide_resistance
+    if R > 0.0:
+        j = int(np.argmin(np.abs(grid.z_faces[1:-1] - cfg.geometry.L)))
+        extra[j] = R
+    return extra
+
+
+def assemble_laplacian(grid: Grid, k: np.ndarray, r_extra_z: Optional[np.ndarray] = None) -> sp.csr_matrix:
+    """Conductance Laplacian L (W/K) such that heat flow out of cell p = (L T)_p.
+    `r_extra_z` adds an area-specific interface resistance to the axial links (one value per interior z-face)."""
     nr, nz = grid.nr, grid.nz
     rf, zf, rc, zc = grid.r_faces, grid.z_faces, grid.r_c, grid.z_c
     dzc = grid.dz_c
@@ -587,6 +663,8 @@ def assemble_laplacian(grid: Grid, k: np.ndarray) -> sp.csr_matrix:
     # axial links (j, j+1)
     A_z = np.broadcast_to(grid.face_area_z[None, :], (nz - 1, nr))
     R_z = (zf[1:-1] - zc[:-1])[:, None] / k[:-1, :] + (zc[1:] - zf[1:-1])[:, None] / k[1:, :]
+    if r_extra_z is not None:
+        R_z = R_z + r_extra_z[:, None]
     G_z = A_z / R_z
     p_z, q_z = idx[:-1, :].ravel(), idx[1:, :].ravel()
 
@@ -635,16 +713,21 @@ class SimResult:
     diagnostics: dict = field(default_factory=dict)
     is_3d: bool = False             # True: solved in (r, theta, z); snapshots/T_surface/material hold the (x, z) plane (nz, 2 nr)
     n_theta: int = 1
+    E_out: Optional[np.ndarray] = None   # (nt,) cumulative heat lost to the heat sink below the pad, J
+
+    @property
+    def E_lost(self) -> np.ndarray:
+        return self.E_out if self.E_out is not None else np.zeros_like(self.E_in)
 
     @property
     def energy_error(self) -> float:
-        """Relative energy-balance error at the end of the run."""
-        return float((self.E_stored[-1] - self.E_in[-1]) / self.E_in[-1])
+        """Relative energy-balance error at the end of the run: stored + lost to the sink - absorbed."""
+        return float((self.E_stored[-1] + self.E_lost[-1] - self.E_in[-1]) / self.E_in[-1])
 
     @property
     def energy_error_max(self) -> float:
         E = np.where(self.E_in > 0, self.E_in, np.nan)
-        return float(np.nanmax(np.abs(self.E_stored - self.E_in) / E))
+        return float(np.nanmax(np.abs(self.E_stored + self.E_lost - self.E_in) / E))
 
     @property
     def dT_probe(self) -> np.ndarray:
@@ -673,7 +756,12 @@ def run_simulation(
     N = nr * nz
 
     C = (rho_cp * grid.volume).ravel()                       # J/K per cell
-    Lap = assemble_laplacian(grid, k)
+    Lap = assemble_laplacian(grid, k, interface_resistance(cfg, grid))
+    # heat sink below the thermal pad: the far face of the last cell row is held at ambient (theta = 0)
+    g_sink = np.zeros(N)
+    if cfg.bottom.enabled and cfg.bottom.sink == "isothermal":
+        g_sink[-nr:] = k[-1, :] * grid.face_area_z / (0.5 * grid.dz_c[-1])
+        Lap = (Lap + sp.diags(g_sink)).tocsr()
     Cdiag = sp.diags(C)
     times = cfg.time_grid()
     dts = np.diff(times)
@@ -712,6 +800,7 @@ def run_simulation(
     T_axis = np.empty((n_steps + 1, nz))
     E_in = np.zeros(n_steps + 1)
     E_stored = np.zeros(n_steps + 1)
+    E_out = np.zeros(n_steps + 1)
     if store_fields:
         snap_idx = set(np.unique(np.linspace(0, n_steps, cfg.numerics.n_snapshots).round().astype(int)))
     else:
@@ -740,8 +829,10 @@ def run_simulation(
             n_factor += 1
         f_half = f_mean[n]
         rhs = B @ T + src * f_half
+        T_old = T
         T = lu.solve(rhs)
         E_in[n + 1] = E_in[n] + f_half * src_total * dt
+        E_out[n + 1] = E_out[n] + dt * float(g_sink @ (0.5 * (T_old + T)))      # Crank-Nicolson consistent
         record(n + 1)
         if progress is not None and (n % report_every == 0 or n == n_steps - 1):
             progress((n + 1) / n_steps)
@@ -754,7 +845,7 @@ def run_simulation(
     return SimResult(
         config=cfg, grid=grid, material=mat, times=times, T_surface=T_surface, T_probe=T_probe,
         T_axis=T_axis, snapshots=snapshots, E_in=E_in, E_stored=E_stored, pulse=pulse,
-        wall_time=time.perf_counter() - t_start, diagnostics=diag,
+        wall_time=time.perf_counter() - t_start, diagnostics=diag, E_out=E_out,
     )
 
 

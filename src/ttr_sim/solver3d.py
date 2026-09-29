@@ -32,7 +32,8 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 from .solver import (
-    MAT_COPPER, MAT_SILICA, MAT_VOID, SimConfig, SimResult, _transition_faces, build_grid,
+    MAT_COPPER, MAT_OXIDE, MAT_PAD, MAT_SILICA, MAT_VOID, SimConfig, SimResult, _transition_faces, build_grid,
+    interface_resistance,
     gaussian_annulus_weights,
 )
 
@@ -88,6 +89,11 @@ def material_map_3d(cfg: SimConfig, grid, th_faces: np.ndarray) -> np.ndarray:
             inside = (rho2 < v.r_half ** 2) & (Z >= v.depth) & (Z < v.z_bottom)
         inside = inside & (rc[None, :, None] < cfg.geometry.R_cu)
         mat[np.broadcast_to(inside, mat.shape)] = MAT_VOID
+    b = cfg.bottom
+    if b.enabled:                                    # layers below the rod span the whole radius
+        z_ox = cfg.geometry.L + b.oxide_cells_thickness
+        mat[(zc > cfg.geometry.L) & (zc < z_ox), :, :] = MAT_OXIDE
+        mat[zc >= z_ox, :, :] = MAT_PAD
     return mat
 
 
@@ -98,6 +104,8 @@ def _properties(cfg: SimConfig, mat: np.ndarray):
         MAT_COPPER: (cfg.copper.k, cfg.copper.rho_cp),
         MAT_SILICA: (cfg.silica.k, cfg.silica.rho_cp),
         MAT_VOID: (cfg.void.k, cfg.void.rho_cp),
+        MAT_OXIDE: (cfg.bottom.oxide_k, cfg.bottom.oxide_rho_cp),
+        MAT_PAD: (cfg.bottom.pad_k, cfg.bottom.pad_rho_cp),
     }.items():
         sel = mat == mid
         k[sel] = kk
@@ -105,7 +113,7 @@ def _properties(cfg: SimConfig, mat: np.ndarray):
     return k, rho_cp
 
 
-def assemble_laplacian_3d(grid, k3: np.ndarray, th_faces: np.ndarray) -> sp.csr_matrix:
+def assemble_laplacian_3d(grid, k3: np.ndarray, th_faces: np.ndarray, r_extra_z=None) -> sp.csr_matrix:
     """Conductance Laplacian (W/K) on the half cylinder; zero-flux at theta = 0 and theta = pi."""
     nr, nz = grid.nr, grid.nz
     rf, zf, rc, zc = grid.r_faces, grid.z_faces, grid.r_c, grid.z_c
@@ -123,6 +131,8 @@ def assemble_laplacian_3d(grid, k3: np.ndarray, th_faces: np.ndarray) -> sp.csr_
     # axial links (j, j+1): face area 0.5 * dtheta * (r_out^2 - r_in^2)
     A_z = 0.5 * (rf[1:] ** 2 - rf[:-1] ** 2)[None, :, None] * dth[None, None, :]
     R_z = (zf[1:-1] - zc[:-1])[:, None, None] / k3[:-1] + (zc[1:] - zf[1:-1])[:, None, None] / k3[1:]
+    if r_extra_z is not None:
+        R_z = R_z + r_extra_z[:, None, None]
     G_z = (A_z / R_z).ravel()
     p_z, q_z = idx[:-1].ravel(), idx[1:].ravel()
 
@@ -193,7 +203,12 @@ def run_simulation_3d(
     A_z_cell = 0.5 * (grid.r_faces[1:] ** 2 - grid.r_faces[:-1] ** 2)[None, :, None] * dth[None, None, :]   # (1, nr, nth) top-face area
     V = A_z_cell * grid.dz_c[:, None, None]
     C = (rho_cp * V).ravel()                                     # J/K per cell (half cylinder)
-    Lap = assemble_laplacian_3d(grid, k3, th_f)
+    Lap = assemble_laplacian_3d(grid, k3, th_f, interface_resistance(cfg, grid))
+    # heat sink below the thermal pad: far face of the last cell row held at ambient (theta = 0)
+    g_sink = np.zeros(N)
+    if cfg.bottom.enabled and cfg.bottom.sink == "isothermal":
+        g_sink[-nr * nth:] = (k3[-1] * A_z_cell[0] / (0.5 * grid.dz_c[-1])).ravel()
+        Lap = (Lap + sp.diags(g_sink)).tocsr()
     Cdiag = sp.diags(C)
     times = cfg.time_grid()
     dts = np.diff(times)
@@ -228,6 +243,7 @@ def run_simulation_3d(
     T_axis = np.empty((n_steps + 1, nz))
     E_in = np.zeros(n_steps + 1)
     E_stored = np.zeros(n_steps + 1)
+    E_out = np.zeros(n_steps + 1)
     snap_idx = set(np.unique(np.linspace(0, n_steps, cfg.numerics.n_snapshots).round().astype(int))) if store_fields else set()
     snapshots = []
 
@@ -258,8 +274,10 @@ def run_simulation_3d(
             dt_cur = dt
             n_factor += 1
         rhs = B @ T + src * f_mean[n]
+        T_old = T
         T = solver.solve(rhs, T)
         E_in[n + 1] = E_in[n] + 2.0 * f_mean[n] * src_total * dt
+        E_out[n + 1] = E_out[n] + 2.0 * dt * float(g_sink @ (0.5 * (T_old + T)))
         record(n + 1)
         if progress is not None and (n % report_every == 0 or n == n_steps - 1):
             progress((n + 1) / n_steps)
@@ -277,5 +295,5 @@ def run_simulation_3d(
     return SimResult(
         config=cfg, grid=grid, material=mat_plane, times=times, T_surface=T_surface, T_probe=T_probe,
         T_axis=T_axis, snapshots=snapshots, E_in=E_in, E_stored=E_stored, pulse=pulse,
-        wall_time=time.perf_counter() - t_start, diagnostics=diag, is_3d=True, n_theta=nth,
+        wall_time=time.perf_counter() - t_start, diagnostics=diag, is_3d=True, n_theta=nth, E_out=E_out,
     )

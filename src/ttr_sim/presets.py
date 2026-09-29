@@ -54,10 +54,8 @@ DEPTH_PRESETS = [
     DepthPreset("깊은 편 (40~100μm)", "40~100 μm", 40e-6),
     DepthPreset("깊음 (100~200μm)", "100~200 μm", 100e-6),
     DepthPreset("매우 깊음 (200~400μm)", "200~400 μm", 200e-6),
-    DepthPreset(
-        "최대 깊이 (400~500μm)", "400~500 μm", 400e-6,
-        "⚠ 후면(z=500 μm) 단열 경계조건에 근접합니다. 열 침투 깊이가 로드 길이에 가까워져 결과 신뢰도가 낮습니다.",
-    ),
+    # no back-face warning: the rod's bottom is modelled physically (oxide + thermal pad + heat sink)
+    DepthPreset("최대 깊이 (400~500μm)", "400~500 μm", 400e-6),
 ]
 
 
