@@ -1,0 +1,197 @@
+<!doctype html>
+<!-- Void geometry editor: a Streamlit custom component (see void_editor_component() in app.py).
+     Draws the copper cylinder cross-section (fixed frame, no zoom / pan) with the void as a Plotly shape
+     that can be moved and resized with the mouse; a drag posts {seq, rc, rh, depth, thick} [μm] back to
+     Streamlit.  Talks to Streamlit through the plain postMessage protocol, so no build step is needed.
+
+     Mouse handling is done here, not by Plotly's editable-shapes mode: the void's bounding box (enlarged to
+     at least MIN_HIT px, so a few-px-thick void is still grabbable) is split into a 3 x 3 grid — the centre
+     cell moves the void, the outer cells drag the corresponding edge(s).
+
+     Streamlit applies the posted value to the settings widgets on the rerun it triggers, but that rerun
+     re-renders this component with the args computed BEFORE the value was applied.  So the figure is the
+     source of truth right after a drag: the geometry is clamped / rounded here (exactly like
+     apply_void_from_editor() in app.py), the title is updated here, and args carrying an older
+     `applied_seq` than the last value sent are ignored for the geometry. -->
+<html>
+<head>
+<meta charset="utf-8">
+<script src="plotly.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #ffffff; }
+  #plot { width: 100%; }
+  /* cursor for the zone under the mouse (overrides Plotly's own cursor classes on the drag layer) */
+  .cur-move, .cur-move * { cursor: move !important; }
+  .cur-ew, .cur-ew * { cursor: ew-resize !important; }
+  .cur-ns, .cur-ns * { cursor: ns-resize !important; }
+  .cur-nwse, .cur-nwse * { cursor: nwse-resize !important; }
+  .cur-nesw, .cur-nesw * { cursor: nesw-resize !important; }
+</style>
+</head>
+<body>
+<div id="plot"></div>
+<script>
+(function () {
+  const MIN_HIT = 30;                    // px: minimum width / height of the grab area around the void
+  const send = (type, data) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data || {}), "*");
+  const gd = document.getElementById("plot");
+  let args = null, ready = false;
+  let sentSeq = 0;                       // seq of the last value posted to Streamlit (0 = none yet)
+  // Current void geometry {rc, rh, depth, thick} [μm].  rc is SIGNED here (the ellipse may be drawn on either
+  // side of the axis, so nothing jumps while dragging); the model only uses the distance |rc| — the pump is
+  // axisymmetric — so Streamlit receives |rc| and `side` remembers which side to draw it on.
+  let geom = null, side = 1;
+  let drag = null;                       // active drag: {zone, x, y, g0}
+
+  const r3 = x => Math.round(x * 1000) / 1000;
+  const g4 = x => Number(x.toPrecision(4)).toString();          // ≈ Python's f"{x:.4g}"
+
+  function clamp(g, a) {
+    const thick = Math.min(Math.max(g.thick, a.min_size), a.L);
+    return {
+      depth: r3(Math.min(Math.max(g.depth, 0), a.L - thick)),
+      thick: r3(thick),
+      rc: r3(Math.sign(g.rc) * Math.min(Math.abs(g.rc), a.rc_max)),
+      rh: r3(Math.min(Math.max(g.rh, a.min_size), a.r_max)),
+    };
+  }
+  const same = (p, q) => p && q && ["rc", "rh", "depth", "thick"].every(k => Math.abs(p[k] - q[k]) < 1e-9);
+
+  function titleOf(a, g) {
+    return a.title_prefix + "void 형상: 깊이(윗면 z) " + g4(g.depth) + " μm, 축에서 벗어난 거리 " + g4(Math.abs(g.rc)) +
+           " μm, 두께 " + g4(g.thick) + " μm, 반경 반폭 " + g4(g.rh) + " μm";
+  }
+
+  function shapeOf(g) {
+    return {
+      type: "circle", xref: "x", yref: "y",
+      x0: g.rc - g.rh, x1: g.rc + g.rh, y0: g.depth, y1: g.depth + g.thick,
+      line: { color: "magenta", width: 2 }, fillcolor: "rgba(255, 0, 255, 0.18)",
+    };
+  }
+  // relayout update for the existing shape.  NB: {"shapes[0]": {...}} would INSERT a new shape at index 0
+  // (Plotly's array-container semantics) and leave the old one behind; attribute paths update in place.
+  function shapeUpdate(g, title) {
+    const u = { "shapes[0].x0": g.rc - g.rh, "shapes[0].x1": g.rc + g.rh,
+                "shapes[0].y0": g.depth, "shapes[0].y1": g.depth + g.thick };
+    if (title) u["title.text"] = titleOf(args, g);
+    return u;
+  }
+
+  function render() {
+    const a = args, R = a.R, L = a.L;
+    // Geometry from the args, unless they predate the last value we sent (then keep the dragged shape).
+    if (geom === null || a.applied_seq >= sentSeq) {
+      geom = { rc: side * a.rc, rh: a.rh, depth: a.depth, thick: a.thick };
+    }
+    const data = [];                       // no traces: the figure is only the rod cross-section + the void shape
+    // Fixed frame laid out like the temperature map: 1:1 aspect, the whole rod depth (0..L) filling the
+    // height, the copper (|r| <= R) drawn navy (= the map's ΔT = 0 colour) in the middle and the grey silica
+    // around it.  The axes cannot be zoomed or panned; only the void shape (shapes[0]) is interactive.
+    const layout = {
+      title: { text: titleOf(a, geom), font: { size: 14 } },
+      xaxis: { title: "r [μm]", range: [-R, R], constrain: "range", fixedrange: true, zeroline: false },
+      yaxis: { title: "z (깊이) [μm]", range: [L, 0], scaleanchor: "x", scaleratio: 1, constrain: "range", fixedrange: true },
+      shapes: [
+        shapeOf(geom),
+        { type: "rect", xref: "x", yref: "y", x0: -R, x1: R, y0: 0, y1: L, layer: "below",
+          fillcolor: "#141466", line: { width: 0 } },
+      ],
+      dragmode: false,
+      height: a.height, width: window.innerWidth, margin: { l: 60, r: 10, t: 50, b: 50 },
+      plot_bgcolor: "#e8e8e8",
+    };
+    const config = { scrollZoom: false, displayModeBar: false, doubleClick: false, responsive: false };
+    Plotly.react(gd, data, layout, config).then(function () { ready = true; });
+    send("streamlit:setFrameHeight", { height: a.height });
+  }
+
+  // ---- mouse interaction -------------------------------------------------------------------------------
+  // Zone under the mouse: {col: 'l'|'c'|'r', row: 't'|'c'|'b'} inside the (enlarged) void box, else null.
+  function zoneAt(clientX, clientY) {
+    if (!ready || !gd._fullLayout) return null;
+    const xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis, rect = gd.getBoundingClientRect();
+    const px = clientX - rect.left - xa._offset, py = clientY - rect.top - ya._offset;
+    const xs = [xa.d2p(geom.rc - geom.rh), xa.d2p(geom.rc + geom.rh)];
+    const ys = [ya.d2p(geom.depth), ya.d2p(geom.depth + geom.thick)];
+    const cx = (xs[0] + xs[1]) / 2, cy = (ys[0] + ys[1]) / 2;
+    const w = Math.max(Math.abs(xs[1] - xs[0]), MIN_HIT), h = Math.max(Math.abs(ys[1] - ys[0]), MIN_HIT);
+    const u = (px - cx) / w, v = (py - cy) / h;                   // -0.5 .. 0.5 inside the box
+    if (Math.abs(u) > 0.5 || Math.abs(v) > 0.5) return null;
+    return { col: u < -1 / 6 ? "l" : u > 1 / 6 ? "r" : "c", row: v < -1 / 6 ? "t" : v > 1 / 6 ? "b" : "c" };
+  }
+
+  function cursorClass(z) {
+    if (!z) return null;
+    if (z.col === "c" && z.row === "c") return "cur-move";
+    if (z.row === "c") return "cur-ew";
+    if (z.col === "c") return "cur-ns";
+    return (z.col === "l") === (z.row === "t") ? "cur-nwse" : "cur-nesw";
+  }
+  function setCursor(cls) {
+    gd.classList.remove("cur-move", "cur-ew", "cur-ns", "cur-nwse", "cur-nesw");
+    if (cls) gd.classList.add(cls);
+  }
+
+  // Geometry for the active drag at mouse position (clientX, clientY): unclamped, updated live.
+  function dragGeom(clientX, clientY) {
+    const xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis;
+    const ddx = xa.p2d(clientX) - xa.p2d(drag.x), ddy = ya.p2d(clientY) - ya.p2d(drag.y);   // px deltas → data
+    const g0 = drag.g0, z = drag.zone;
+    if (z.col === "c" && z.row === "c") return { rc: g0.rc + ddx, rh: g0.rh, depth: g0.depth + ddy, thick: g0.thick };
+    let x0 = g0.rc - g0.rh, x1 = g0.rc + g0.rh, y0 = g0.depth, y1 = g0.depth + g0.thick;
+    if (z.col === "l") x0 += ddx; else if (z.col === "r") x1 += ddx;
+    if (z.row === "t") y0 += ddy; else if (z.row === "b") y1 += ddy;
+    return { rc: (x0 + x1) / 2, rh: Math.abs(x1 - x0) / 2, depth: Math.min(y0, y1), thick: Math.abs(y1 - y0) };
+  }
+
+  // Live feedback during a drag: rewrite the existing SVG path of the shape directly (like Plotly's own
+  // shape dragging does).  Going through Plotly.relayout on every mouse move leaves stale paths behind
+  // for a frame (afterimages); the layout is updated once, on mouseup.
+  function drawLive(g) {
+    const path = gd.querySelector(".shapelayer path");
+    if (!path) return;
+    const xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis;
+    const x0 = xa._offset + xa.d2p(g.rc - g.rh), x1 = xa._offset + xa.d2p(g.rc + g.rh);
+    const y0 = ya._offset + ya.d2p(g.depth), y1 = ya._offset + ya.d2p(g.depth + g.thick);
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, rx = Math.abs(x1 - x0) / 2, ry = Math.abs(y1 - y0) / 2;
+    path.setAttribute("d", "M" + (cx - rx) + "," + cy + "a" + rx + "," + ry + " 0 1,0 " + (2 * rx) + ",0a" +
+                           rx + "," + ry + " 0 1,0 " + (-2 * rx) + ",0Z");
+  }
+
+  gd.addEventListener("mousedown", function (e) {
+    if (e.button !== 0) return;
+    const z = zoneAt(e.clientX, e.clientY);
+    if (!z) return;
+    e.preventDefault(); e.stopPropagation();
+    drag = { zone: z, x: e.clientX, y: e.clientY, g0: Object.assign({}, geom) };
+    setCursor(cursorClass(z));
+  }, true);
+
+  document.addEventListener("mousemove", function (e) {
+    if (drag) { drawLive(dragGeom(e.clientX, e.clientY)); return; }
+    setCursor(cursorClass(zoneAt(e.clientX, e.clientY)));
+  });
+
+  document.addEventListener("mouseup", function (e) {
+    if (!drag) return;
+    const g = clamp(dragGeom(e.clientX, e.clientY), args);
+    drag = null;
+    setCursor(cursorClass(zoneAt(e.clientX, e.clientY)));
+    if (same(g, geom)) { Plotly.relayout(gd, shapeUpdate(geom, false)); return; }
+    geom = g;
+    if (g.rc !== 0) side = Math.sign(g.rc);
+    Plotly.relayout(gd, shapeUpdate(g, true));                 // snap to the clamped / rounded values
+    sentSeq = Date.now();                                    // unique per drag, also across iframe reloads
+    send("streamlit:setComponentValue", { value: Object.assign({ seq: sentSeq }, g, { rc: Math.abs(g.rc) }), dataType: "json" });
+  });
+
+  window.addEventListener("resize", function () { if (args) Plotly.relayout(gd, { width: window.innerWidth }); });
+  window.addEventListener("message", function (e) {
+    if (e.data && e.data.type === "streamlit:render") { args = e.data.args; render(); }
+  });
+  send("streamlit:componentReady", { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>

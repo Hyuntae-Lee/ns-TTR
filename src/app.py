@@ -6,11 +6,15 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
+import tempfile
+from pathlib import Path
 from dataclasses import replace
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.offline import get_plotlyjs
 import streamlit as st
 import streamlit.components.v1 as components
 from scipy.interpolate import RegularGridInterpolator
@@ -140,6 +144,7 @@ def preset_defaults(idx: int) -> dict:
         # half the depth, but never reaching past the rod's back face (keeps the deepest preset inside the rod)
         void_thickness_um=round(min(0.5 * d_um, 0.5 * (500.0 - d_um)), 3),
         void_r_um=min(round(2 * d_um, 3), 40.0),
+        void_rc_um=0.0,                                   # presets describe an on-axis void
         energy_nJ=default_energy_nJ(p.tau_p),
         t_end_us=default_window_us(p, d_um),
     )
@@ -193,6 +198,52 @@ def build_config() -> SimConfig:
         pad_thickness=float(s.get("pad_um", 200.0)) * UM, pad_k=float(s.get("pad_k", 62.5)),
     )
     return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics, bottom=bottom)
+
+
+def kvoid_label(k: float) -> str:
+    return f"k_void = {k:g} W/m·K" + (" (공기)" if k == KVOID_PRESETS[0].k else "") + "   ·   "
+
+
+def void_title(v: VoidSpec) -> str:
+    """One-line void description (k_void + geometry) with the same labels as the settings panel.
+    (void_editor.html formats the same line in the browser; keep the two in step.)"""
+    return (kvoid_label(v.k) + f"void 형상: 깊이(윗면 z) {v.depth * 1e6:.4g} μm, "
+            f"축에서 벗어난 거리 {v.r_center * 1e6:.4g} μm, 두께 {v.thickness * 1e6:.4g} μm, "
+            f"반경 반폭 {v.r_half * 1e6:.4g} μm")
+
+
+# Bounds of the void-geometry inputs [μm]; a dragged shape is clamped to these (in the browser and again here).
+VOID_RC_MAX, VOID_R_MAX, VOID_MIN = 40.0, 40.0, 0.001
+
+
+@st.cache_resource
+def void_editor_component():
+    """Register the drag-to-edit void figure (void_editor.html + a copy of plotly.js, served from a temp
+    directory so the bundled exe never needs to write next to its own files)."""
+    d = Path(tempfile.gettempdir()) / "ns_ttr_void_editor"
+    d.mkdir(parents=True, exist_ok=True)
+    js_src = get_plotlyjs()
+    js = d / "plotly.min.js"
+    if not js.exists() or js.stat().st_size != len(js_src.encode("utf-8")):
+        js.write_text(js_src, encoding="utf-8")
+    shutil.copyfile(Path(__file__).with_name("void_editor.html"), d / "index.html")
+    return components.declare_component("ttr_void_editor", path=str(d))
+
+
+def apply_void_from_editor(v: dict) -> bool:
+    """Write a dragged void (μm, from the editor) into the settings widgets' state. Returns True if changed."""
+    s = st.session_state
+    L_um = Geometry().L * 1e6
+    thick = min(max(v["thick"], VOID_MIN), L_um)
+    new = dict(
+        void_depth_um=round(min(max(v["depth"], 0.0), L_um - thick), 3),
+        void_thickness_um=round(thick, 3),
+        void_rc_um=round(min(abs(v["rc"]), VOID_RC_MAX), 3),        # distance from the axis (the editor may draw the void at r < 0)
+        void_r_um=round(min(max(v["rh"], VOID_MIN), VOID_R_MAX), 3),
+    )
+    changed = any(abs(s[k] - val) > 1e-9 for k, val in new.items())
+    s.update(new)
+    return changed
 
 
 def progress_ui(container):
@@ -342,6 +393,29 @@ def card_header(num: int, title: str):
     st.markdown(f'<div class="card-h"><span class="num">{num}</span>{title}</div>', unsafe_allow_html=True)
 
 
+# ---- initial page (no result yet): geometry preview with a draggable void.  It is created here, BEFORE the
+# sidebar widgets, because a drag must update those widgets' values through session_state, which is only
+# allowed while the widgets have not been instantiated yet on this rerun.  (No st.rerun() afterwards: a
+# forced rerun re-applies the browser's widget states and would undo the update; the figure keeps itself
+# consistent instead, see void_editor.html.)
+editor_slot = st.empty()              # cleared below once a result exists (the first run starts without one)
+if st.session_state.result is None:
+    s = st.session_state
+    geo = Geometry()
+    with editor_slot.container():
+        # Geometry preview: void = drag the centre to move, an edge to resize; either side of the axis is fine
+        # (the pump is axisymmetric, only the distance from the axis is used).
+        dragged = void_editor_component()(
+            R=geo.R_cu * 1e6, L=geo.L * 1e6,
+            rc=s.void_rc_um, rh=s.void_r_um, depth=s.void_depth_um, thick=s.void_thickness_um,
+            rc_max=VOID_RC_MAX, r_max=VOID_R_MAX, min_size=VOID_MIN,
+            title_prefix=kvoid_label(KVOID_PRESETS[s.kvoid_idx].k), applied_seq=s.get("void_editor_seq", 0),
+            height=900, key="void_editor", default=None,
+        )
+    if dragged and dragged.get("seq") != s.get("void_editor_seq", 0):
+        s.void_editor_seq = dragged["seq"]
+        apply_void_from_editor(dragged)
+
 with st.sidebar:
     st.title("Nanosecond Transient Thermoreflectance Simulator")
 
@@ -371,7 +445,7 @@ with st.sidebar:
             c1, c2 = st.columns(2)
             c1.number_input("깊이 (윗면 z) [μm]", min_value=0.0, max_value=500.0, step=0.01, key="void_depth_um", format="%.3f")
             c2.number_input("두께 [μm]", min_value=0.001, max_value=500.0, step=0.01, key="void_thickness_um", format="%.3f")
-            c1.number_input("축에서 벗어난 거리 [μm]", min_value=0.0, max_value=40.0, step=0.01, key="void_rc_um", value=0.0, format="%.3f",
+            c1.number_input("축에서 벗어난 거리 [μm]", min_value=0.0, max_value=40.0, step=0.01, key="void_rc_um", format="%.3f",
                             help="void 중심이 원기둥 축에서 벗어난 거리. 0 이면 축대칭 2D 계산, 0 보다 크면 void 하나가 축 밖에 있는 "
                                  "3차원(r, θ, z) 계산을 합니다 (펌프·프로브는 축 중심 고정). 방향은 결과에 영향이 없으므로 거리만 지정합니다.")
             c2.number_input("반경 반폭 [μm]", min_value=0.001, max_value=40.0, step=0.01, key="void_r_um", format="%.3f")
@@ -544,6 +618,8 @@ if apply:
         st.exception(e)
     finally:
         bar.empty()
+if st.session_state.result is not None:
+    editor_slot.empty()               # the geometry editor belongs to the initial page only
 
 # ---- view selector: pinned to the top of the screen and always visible (even before the first run).
 # A radio (not st.tabs) so the selected view survives the rerun triggered by the test buttons.
@@ -553,8 +629,7 @@ with st.container(key="view_bar"):
 
 res = st.session_state.result
 if res is None:
-    st.info("왼쪽 패널에서 프리셋과 void 형상을 선택한 뒤 **적용** 을 누르세요.")
-    st.stop()
+    st.stop()           # the initial page (geometry editor) was already drawn above the sidebar code
 
 cfg: SimConfig = res["cfg"]
 base, void, sig, ana = res["base"], res["void"], res["sig"], res["ana"]
@@ -725,14 +800,7 @@ if view == VIEWS[1]:
 
     # Static title: the void definition (k_void + geometry, same labels as the settings panel). The snapshot
     # time is already shown by the slider's current-value readout below the map.
-    if cfg.void.enabled:
-        v = cfg.void
-        kv_note = " (공기)" if v.k == KVOID_PRESETS[0].k else ""
-        field_title = (f"k_void = {v.k:g} W/m·K{kv_note}   ·   void 형상: 깊이(윗면 z) {v.depth * 1e6:.4g} μm, "
-                       f"축에서 벗어난 거리 {v.r_center * 1e6:.4g} μm, 두께 {v.thickness * 1e6:.4g} μm, "
-                       f"반경 반폭 {v.r_half * 1e6:.4g} μm")
-    else:
-        field_title = "void 없음 (baseline)"
+    field_title = void_title(cfg.void) if cfg.void.enabled else "void 없음 (baseline)"
 
     init = min(len(fields) - 1, len(fields) // 3)
     colorscale = "RdBu_r" if is_diff else TEMP_COLORSCALE

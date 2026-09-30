@@ -9,7 +9,7 @@ import sys
 SRC = Path(SPECPATH).parent / "src"          # the Streamlit app, bundled unchanged
 sys.path.insert(0, str(SRC))                 # so collect_submodules("ttr_sim") below can import it
 
-datas = [(str(SRC / "app.py"), "app")]
+datas = [(str(SRC / "app.py"), "app"), (str(SRC / "void_editor.html"), "app")]
 binaries = []
 hiddenimports = []
 
