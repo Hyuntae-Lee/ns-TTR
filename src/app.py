@@ -304,9 +304,15 @@ st.markdown(
       .st-key-view_bar label > div:first-child { display: none !important; }            /* hide the radio circle */
       .st-key-view_bar label:has(input:checked) { background: #d62728; border-color: #d62728; }
       .st-key-view_bar label:has(input:checked) p { color: #ffffff !important; font-weight: 700; }
-      /* Streamlit's own header stays clickable (Deploy / menu) but no longer covers the bar */
+      /* Streamlit's own header (z-index ~1e6) sits on top of the bar: let clicks pass through it everywhere
+         except the actual controls (Deploy / ⋮ menu / status widget). The toolbar itself spans the full width,
+         so it must be click-through too, or the view buttons underneath it never receive the click. */
       header[data-testid="stHeader"] { background: transparent !important; pointer-events: none; }
-      header[data-testid="stHeader"] [data-testid="stToolbar"] { pointer-events: auto; }
+      header[data-testid="stHeader"] [data-testid="stToolbar"] { pointer-events: none; }
+      header[data-testid="stHeader"] [data-testid="stToolbarActions"],
+      header[data-testid="stHeader"] [data-testid="stAppDeployButton"],
+      header[data-testid="stHeader"] [data-testid="stMainMenu"],
+      header[data-testid="stHeader"] [data-testid="stStatusWidget"] { pointer-events: auto; }
       [data-testid="stMainBlockContainer"] { padding-top: 4.5rem !important; }
       /* temperature map: the single reset icon sits top-right inside the plot, translucent until hovered */
       .js-plotly-plot .modebar { opacity: 0.45; transition: opacity 0.15s; }
@@ -352,19 +358,16 @@ with st.sidebar:
         if preset.warning:
             st.warning(preset.warning)
 
-    # ---- card 2: k_void (fixed)
-    with st.container(border=True):
-        card_header(2, "k_void (void 열전도율)")
-        st.session_state.kvoid_idx = 0                       # fixed: real air value (no user control)
-        st.markdown(f'<div class="card-body">{KVOID_PRESETS[0].k:g} W/m·K (공기)</div>', unsafe_allow_html=True)
+    # k_void is fixed to the real air value (kvoid_idx = 0, set with the other defaults) and is not shown
+    # here; it is printed in the temperature-map title instead.
 
     # All numeric inputs live in a form: typed values are collected when the 적용 button is
     # clicked (or Enter is pressed inside a field), so they never depend on a keypress being
     # delivered to the widget (an IME can swallow Enter) and never trigger intermediate reruns.
     with st.form("settings", border=False):
-        # ---- card 3: void geometry
+        # ---- card 2: void geometry
         with st.container(border=True):
-            card_header(3, "Void 형상")
+            card_header(2, "Void 형상")
             c1, c2 = st.columns(2)
             c1.number_input("깊이 (윗면 z) [μm]", min_value=0.0, max_value=500.0, step=0.01, key="void_depth_um", format="%.3f")
             c2.number_input("두께 [μm]", min_value=0.001, max_value=500.0, step=0.01, key="void_thickness_um", format="%.3f")
@@ -373,9 +376,9 @@ with st.sidebar:
                                  "3차원(r, θ, z) 계산을 합니다 (펌프·프로브는 축 중심 고정). 방향은 결과에 영향이 없으므로 거리만 지정합니다.")
             c2.number_input("반경 반폭 [μm]", min_value=0.001, max_value=40.0, step=0.01, key="void_r_um", format="%.3f")
 
-        # ---- card 4: laser
+        # ---- card 3: laser
         with st.container(border=True):
-            card_header(4, "레이저")
+            card_header(3, "레이저")
             st.markdown(
                 f'<div class="card-body muted">펌프: {PUMP_WAVELENGTH_NM:g} nm 펄스, 사각 (폭 = τp) · '
                 f'프로브: {PROBE_WAVELENGTH_NM:g} nm CW</div>',
@@ -398,9 +401,9 @@ with st.sidebar:
                      "절대값이 중요하면 기준 시료로 보정한 값을 넣으세요.",
             )
 
-        # ---- card 5: layers below the rod
+        # ---- card 4: layers below the rod
         with st.container(border=True):
-            card_header(5, "후면 (산화막 + 열패드)")
+            card_header(4, "후면 (산화막 + 열패드)")
             st.markdown('<div class="card-body muted">구리 아래: 산화막 → 열패드 → 히트싱크(실온 고정)</div>', unsafe_allow_html=True)
             c1, c2 = st.columns(2)
             c1.number_input("산화막 두께 [nm]", min_value=0.0, max_value=50000.0, value=5.0, step=1.0, key="ox_nm", format="%.4g",
@@ -717,10 +720,17 @@ if view == VIEWS[1]:
         st.session_state[cache_key] = (fields, gmax)
     fields, gmax = st.session_state[cache_key]
     frame_t = [snaps[i][0] for i in frame_idx]
-    frame_max = [float(np.max(np.abs(f))) for f in fields]
 
-    def frame_title(k: int) -> str:
-        return f"t = {frame_t[k] * tscale:.3g} {tunit}   ·   이 스냅샷 최대 |ΔT| = {frame_max[k]:.4g} K"
+    # Static title: the void definition (k_void + geometry, same labels as the settings panel). The snapshot
+    # time is already shown by the slider's current-value readout below the map.
+    if cfg.void.enabled:
+        v = cfg.void
+        kv_note = " (공기)" if v.k == KVOID_PRESETS[0].k else ""
+        field_title = (f"k_void = {v.k:g} W/m·K{kv_note}   ·   void 형상: 깊이(윗면 z) {v.depth * 1e6:.4g} μm, "
+                       f"축에서 벗어난 거리 {v.r_center * 1e6:.4g} μm, 두께 {v.thickness * 1e6:.4g} μm, "
+                       f"반경 반폭 {v.r_half * 1e6:.4g} μm")
+    else:
+        field_title = "void 없음 (baseline)"
 
     init = min(len(fields) - 1, len(fields) // 3)
     colorscale = "RdBu_r" if is_diff else TEMP_COLORSCALE
@@ -731,7 +741,7 @@ if view == VIEWS[1]:
         hovertemplate="r=%{x:.2f} μm<br>z=%{y:.2f} μm<br>ΔT=%{z:.4g} K<extra></extra>",
     )
     frames = [
-        go.Frame(name=str(k), data=[go.Heatmap(z=fields[k], **heat_kw)], layout=go.Layout(title_text=frame_title(k)))
+        go.Frame(name=str(k), data=[go.Heatmap(z=fields[k], **heat_kw)])
         for k in range(len(fields))
     ]
     fig = go.Figure(data=[go.Heatmap(z=fields[init], **heat_kw)], frames=frames)
@@ -759,7 +769,7 @@ if view == VIEWS[1]:
     PLOT_H = 900
     base_w = int(PLOT_H * (2 * R_cu_um) / L_um) + 230
     fig.update_layout(
-        title=dict(text=frame_title(init), font=dict(size=14)), meta=dict(tag="ttr-field", R=R_cu_um, L=L_um),
+        title=dict(text=field_title, font=dict(size=14)), meta=dict(tag="ttr-field", R=R_cu_um, L=L_um),
         xaxis=dict(title="r [μm]", range=[-R_cu_um, R_cu_um], constrain="range", zeroline=False),
         yaxis=dict(title="z (깊이) [μm]", range=[L_um, 0], scaleanchor="x", scaleratio=1, constrain="range"),
         dragmode="pan", uirevision="field", height=PLOT_H, width=3 * base_w,
