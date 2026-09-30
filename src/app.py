@@ -505,6 +505,17 @@ with st.sidebar:
                 """
             )
 
+        # ---- model description (collapsed card, static text)
+        with st.expander("모델"):
+            st.markdown(
+                """
+                - 축대칭 (r, z) 열확산 `ρc ∂T/∂t = ∇·(k∇T)`, 유한체적 + Crank–Nicolson (SuperLU 1회 분해)
+                - 레이저: Beer–Lambert 흡수를 표면 flux `-k ∂T/∂z = I₀(1-R) f(t) e^{-2r²/w²}` 로 처리 (Δz ≫ 흡수깊이 조건 확인)
+                - 경계: 축 대칭, 구리/실리카 계면 온도·flux 연속, 외곽 단열, 후면(z=500 μm) 아래에 산화막 + 열패드 + 히트싱크(실온)
+                - 신호: 프로브 가중 표면 온도의 void 유/무 차이 ΔT(t) 와 상대 대비 ΔT/ΔT_baseline
+                """
+            )
+
         # warnings stay visible outside the collapsed info card
         if dT_hi > 50:
             st.error(f"예상 피크 상승 최대 {dT_hi:.3g} K: 선형 모델의 유효 범위를 넘습니다. 펄스 에너지(파워)를 줄이세요.")
@@ -543,15 +554,6 @@ with st.container(key="view_bar"):
 res = st.session_state.result
 if res is None:
     st.info("왼쪽 패널에서 프리셋과 void 형상을 선택한 뒤 **적용** 을 누르세요.")
-    st.markdown(
-        """
-        **모델 요약**
-        - 축대칭 (r, z) 열확산 `ρc ∂T/∂t = ∇·(k∇T)`, 유한체적 + Crank–Nicolson (SuperLU 1회 분해)
-        - 레이저: Beer–Lambert 흡수를 표면 flux `-k ∂T/∂z = I₀(1-R) f(t) e^{-2r²/w²}` 로 처리 (Δz ≫ 흡수깊이 조건 확인)
-        - 경계: 축 대칭, 구리/실리카 계면 온도·flux 연속, 외곽 단열, 후면(z=500 μm) 아래에 산화막 + 열패드 + 히트싱크(실온)
-        - 신호: 프로브 가중 표면 온도의 void 유/무 차이 ΔT(t) 와 상대 대비 ΔT/ΔT_baseline
-        """
-    )
     st.stop()
 
 cfg: SimConfig = res["cfg"]
