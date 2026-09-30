@@ -413,7 +413,7 @@ with st.sidebar:
                             help="체적 열용량은 2.0 MJ/m³K 로 가정. 패드의 먼 쪽 면은 실온으로 고정된 히트싱크입니다.")
 
         # ---- advanced numerics (collapsed card)
-        with st.expander("고급 수치 설정"):
+        with st.expander("설정"):
             st.select_slider("펄스 중 시간 스텝 수 N (Δt = τp / N)", options=[50, 100, 200, 400, 800], value=200, key="steps_per_pulse",
                              help="펄스가 진행되는 동안의 시간 간격. N = 200 이면 Δt = τp/200 이고, 이는 표면층 격자 기준 Fourier 수 "
                                   "Fo = D·Δt/Δz² = 0.5 에 해당합니다. Crank–Nicolson은 무조건 안정이지만 N 이 작으면(Δt 가 크면) "
