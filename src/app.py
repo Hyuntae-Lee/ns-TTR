@@ -471,10 +471,9 @@ with st.sidebar:
                      "절대값이 중요하면 기준 시료로 보정한 값을 넣으세요.",
             )
 
-        # ---- card 3: layers below the rod
-        with st.container(border=True):
-            card_header(3, "후면 (산화막 + 열패드)")
-            st.markdown('<div class="card-body muted">구리 아래: 산화막 → 열패드 → 히트싱크(실온 고정)</div>', unsafe_allow_html=True)
+        # ---- layers below the rod (collapsed card, like the numerics below; rarely changed)
+        with st.expander("후면 (산화막 + 열패드)"):
+            st.caption("구리 아래: 산화막 → 열패드 → 히트싱크(실온 고정)")
             c1, c2 = st.columns(2)
             c1.number_input("산화막 두께 [nm]", min_value=0.0, max_value=50000.0, value=5.0, step=1.0, key="ox_nm", format="%.4g",
                             help="공기 중 방치로 생긴 구리 자연 산화막은 보통 2~10 nm 입니다 (기본 5 nm). 200 nm 미만은 격자로 나누지 않고 "
