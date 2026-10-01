@@ -11,7 +11,7 @@
      Streamlit applies the posted value to the settings widgets on the rerun it triggers, but that rerun
      re-renders this component with the args computed BEFORE the value was applied.  So the figure is the
      source of truth right after a drag: the geometry is clamped / rounded here (exactly like
-     apply_void_from_editor() in app.py), the title is updated here, and args carrying an older
+     apply_void_from_editor() in app.py), the description under the map is updated here, and args carrying an older
      `applied_seq` than the last value sent are ignored for the geometry. -->
 <html>
 <head>
@@ -20,6 +20,27 @@
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #ffffff; }
   #plot { width: 100%; }
+  /* void description under the map: wraps freely, the frame height follows it (see fitFrame) */
+  #info { font: 14px/1.5 "Source Sans Pro", "Source Sans", "Segoe UI", "Malgun Gothic", sans-serif; color: #31333f;
+          padding: 4px 10px 10px 60px; display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
+  /* one card per topic (k_void | Void 형상): heading on top, values below */
+  #info .sec { border: 1px solid #e3e6ec; border-radius: 8px; background: #f7f8fa; padding: 6px 12px 8px 12px; }
+  #info .sec-h { font-weight: 700; font-size: 12px; color: #d62728; letter-spacing: 0.02em; margin-bottom: 2px; }
+  #info .sec-b { display: flex; flex-wrap: wrap; gap: 2px 18px; }
+  #info .item { white-space: nowrap; display: flex; align-items: baseline; }
+  #info .item .k { color: #6b7280; margin-right: 6px; }
+  #info .item .v { font-weight: 600; }
+  /* Void 형상: two pairs per row on a shared grid (label | number | unit, twice), so the second row lines up
+     under the first — 두께 under 깊이, 반경 반폭 under 축에서 벗어난 거리.  The number column has a fixed width
+     and is right-aligned, so labels and units never shift as the values change. */
+  #info .sec-b.grid { display: grid; grid-template-columns: auto 4.6em auto auto 4.6em auto; column-gap: 0; row-gap: 2px;
+                      align-items: baseline; justify-content: start; }
+  #info .sec-b.grid .item { display: contents; }
+  #info .sec-b.grid .k { margin-right: 6px; }
+  #info .sec-b.grid .k:nth-child(n) { white-space: nowrap; }
+  #info .sec-b.grid .item:nth-child(even) .k { margin-left: 26px; }      /* gap between the two pairs */
+  #info .item .v.num { text-align: right; font-variant-numeric: tabular-nums; }
+  #info .item .u { color: #6b7280; margin-left: 4px; }
   /* cursor for the zone under the mouse (overrides Plotly's own cursor classes on the drag layer) */
   .cur-move, .cur-move * { cursor: move !important; }
   .cur-ew, .cur-ew * { cursor: ew-resize !important; }
@@ -30,11 +51,12 @@
 </head>
 <body>
 <div id="plot"></div>
+<div id="info"></div>
 <script>
 (function () {
   const MIN_HIT = 30;                    // px: minimum width / height of the grab area around the void
   const send = (type, data) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data || {}), "*");
-  const gd = document.getElementById("plot");
+  const gd = document.getElementById("plot"), info = document.getElementById("info");
   let args = null, ready = false;
   let sentSeq = 0;                       // seq of the last value posted to Streamlit (0 = none yet)
   // Current void geometry {rc, rh, depth, thick} [μm].  rc is SIGNED here (the ellipse may be drawn on either
@@ -44,7 +66,6 @@
   let drag = null;                       // active drag: {zone, x, y, g0}
 
   const r3 = x => Math.round(x * 1000) / 1000;
-  const g4 = x => Number(x.toPrecision(4)).toString();          // ≈ Python's f"{x:.4g}"
 
   function clamp(g, a) {
     const thick = Math.min(Math.max(g.thick, a.min_size), a.L);
@@ -57,9 +78,16 @@
   }
   const same = (p, q) => p && q && ["rc", "rh", "depth", "thick"].every(k => Math.abs(p[k] - q[k]) < 1e-9);
 
-  function titleOf(a, g) {
-    return a.title_prefix + "void 형상: 깊이(윗면 z) " + g4(g.depth) + " μm, 축에서 벗어난 거리 " + g4(Math.abs(g.rc)) +
-           " μm, 두께 " + g4(g.thick) + " μm, 반경 반폭 " + g4(g.rh) + " μm";
+  // Sections shown under the map: [heading, [[label, value(, unit)], ...]].  Same labels as the settings panel.
+  // With a unit, the value is a number drawn right-aligned in a fixed-width column (3 decimals, like the panel).
+  function sectionsOf(a, g) {
+    const n = x => x.toFixed(3);
+    return [
+      ["k_void", [["void 열전도율", a.kvoid_text]]],
+      // row-major on a 2-pair grid: 두께 sits under 깊이, 반경 반폭 under 축에서 벗어난 거리
+      ["Void 형상", [["깊이 (윗면 z)", n(g.depth), "μm"], ["축에서 벗어난 거리", n(Math.abs(g.rc)), "μm"],
+                     ["두께", n(g.thick), "μm"], ["반경 반폭", n(g.rh), "μm"]]],
+    ];
   }
 
   function shapeOf(g) {
@@ -71,11 +99,32 @@
   }
   // relayout update for the existing shape.  NB: {"shapes[0]": {...}} would INSERT a new shape at index 0
   // (Plotly's array-container semantics) and leave the old one behind; attribute paths update in place.
-  function shapeUpdate(g, title) {
-    const u = { "shapes[0].x0": g.rc - g.rh, "shapes[0].x1": g.rc + g.rh,
-                "shapes[0].y0": g.depth, "shapes[0].y1": g.depth + g.thick };
-    if (title) u["title.text"] = titleOf(args, g);
-    return u;
+  function shapeUpdate(g) {
+    return { "shapes[0].x0": g.rc - g.rh, "shapes[0].x1": g.rc + g.rh,
+             "shapes[0].y0": g.depth, "shapes[0].y1": g.depth + g.thick };
+  }
+  // Cards under the map + iframe height = map + however much height the cards need at the current width.
+  function showInfo(g) {
+    const el = (cls, text) => { const e = document.createElement("div"); e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+    info.replaceChildren(...sectionsOf(args, g).map(function (sec) {
+      const box = el("sec"), body = el("sec-b");
+      box.appendChild(el("sec-h", sec[0]));
+      sec[1].forEach(function (kv) {
+        const item = el("item"), k = document.createElement("span"), v = document.createElement("span");
+        k.className = "k"; k.textContent = kv[0]; v.className = "v"; v.textContent = kv[1];
+        item.append(k, v);
+        if (kv.length > 2) {
+          const u = document.createElement("span");
+          u.className = "u"; u.textContent = kv[2]; v.className = "v num";
+          item.appendChild(u);
+          body.classList.add("grid");
+        }
+        body.appendChild(item);
+      });
+      box.appendChild(body);
+      return box;
+    }));
+    send("streamlit:setFrameHeight", { height: args.height + info.offsetHeight });
   }
 
   function render() {
@@ -89,7 +138,6 @@
     // height, the copper (|r| <= R) drawn navy (= the map's ΔT = 0 colour) in the middle and the grey silica
     // around it.  The axes cannot be zoomed or panned; only the void shape (shapes[0]) is interactive.
     const layout = {
-      title: { text: titleOf(a, geom), font: { size: 14 } },
       xaxis: { title: "r [μm]", range: [-R, R], constrain: "range", fixedrange: true, zeroline: false },
       yaxis: { title: "z (깊이) [μm]", range: [L, 0], scaleanchor: "x", scaleratio: 1, constrain: "range", fixedrange: true },
       shapes: [
@@ -98,12 +146,12 @@
           fillcolor: "#141466", line: { width: 0 } },
       ],
       dragmode: false,
-      height: a.height, width: window.innerWidth, margin: { l: 60, r: 10, t: 50, b: 50 },
+      height: a.height, width: window.innerWidth, margin: { l: 60, r: 10, t: 20, b: 50 },
       plot_bgcolor: "#e8e8e8",
     };
     const config = { scrollZoom: false, displayModeBar: false, doubleClick: false, responsive: false };
     Plotly.react(gd, data, layout, config).then(function () { ready = true; });
-    send("streamlit:setFrameHeight", { height: a.height });
+    showInfo(geom);
   }
 
   // ---- mouse interaction -------------------------------------------------------------------------------
@@ -149,7 +197,8 @@
   // shape dragging does).  Going through Plotly.relayout on every mouse move leaves stale paths behind
   // for a frame (afterimages); the layout is updated once, on mouseup.
   function drawLive(g) {
-    const path = gd.querySelector(".shapelayer path");
+    // shapes[0] only: the copper rectangle (shapes[1], lower layer) comes first in DOM order
+    const path = gd.querySelector('.shapelayer .shape-group[data-index="0"] path');
     if (!path) return;
     const xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis;
     const x0 = xa._offset + xa.d2p(g.rc - g.rh), x1 = xa._offset + xa.d2p(g.rc + g.rh);
@@ -169,7 +218,7 @@
   }, true);
 
   document.addEventListener("mousemove", function (e) {
-    if (drag) { drawLive(dragGeom(e.clientX, e.clientY)); return; }
+    if (drag) { const g = dragGeom(e.clientX, e.clientY); drawLive(g); showInfo(clamp(g, args)); return; }
     setCursor(cursorClass(zoneAt(e.clientX, e.clientY)));
   });
 
@@ -178,15 +227,16 @@
     const g = clamp(dragGeom(e.clientX, e.clientY), args);
     drag = null;
     setCursor(cursorClass(zoneAt(e.clientX, e.clientY)));
-    if (same(g, geom)) { Plotly.relayout(gd, shapeUpdate(geom, false)); return; }
+    if (same(g, geom)) { Plotly.relayout(gd, shapeUpdate(geom)); showInfo(geom); return; }
     geom = g;
     if (g.rc !== 0) side = Math.sign(g.rc);
-    Plotly.relayout(gd, shapeUpdate(g, true));                 // snap to the clamped / rounded values
+    Plotly.relayout(gd, shapeUpdate(g));                       // snap to the clamped / rounded values
+    showInfo(g);
     sentSeq = Date.now();                                    // unique per drag, also across iframe reloads
     send("streamlit:setComponentValue", { value: Object.assign({ seq: sentSeq }, g, { rc: Math.abs(g.rc) }), dataType: "json" });
   });
 
-  window.addEventListener("resize", function () { if (args) Plotly.relayout(gd, { width: window.innerWidth }); });
+  window.addEventListener("resize", function () { if (args) { Plotly.relayout(gd, { width: window.innerWidth }); showInfo(geom); } });
   window.addEventListener("message", function (e) {
     if (e.data && e.data.type === "streamlit:render") { args = e.data.args; render(); }
   });

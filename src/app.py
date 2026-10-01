@@ -200,13 +200,17 @@ def build_config() -> SimConfig:
     return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics, bottom=bottom)
 
 
+def kvoid_text(k: float) -> str:
+    return f"{k:g} W/m·K" + (" (공기)" if k == KVOID_PRESETS[0].k else "")
+
+
 def kvoid_label(k: float) -> str:
-    return f"k_void = {k:g} W/m·K" + (" (공기)" if k == KVOID_PRESETS[0].k else "") + "   ·   "
+    return f"k_void = {kvoid_text(k)}   ·   "
 
 
 def void_title(v: VoidSpec) -> str:
     """One-line void description (k_void + geometry) with the same labels as the settings panel.
-    (void_editor.html formats the same line in the browser; keep the two in step.)"""
+    (void_editor.html shows the same labels under the geometry preview; keep the two in step.)"""
     return (kvoid_label(v.k) + f"void 형상: 깊이(윗면 z) {v.depth * 1e6:.4g} μm, "
             f"축에서 벗어난 거리 {v.r_center * 1e6:.4g} μm, 두께 {v.thickness * 1e6:.4g} μm, "
             f"반경 반폭 {v.r_half * 1e6:.4g} μm")
@@ -409,7 +413,7 @@ if st.session_state.result is None:
             R=geo.R_cu * 1e6, L=geo.L * 1e6,
             rc=s.void_rc_um, rh=s.void_r_um, depth=s.void_depth_um, thick=s.void_thickness_um,
             rc_max=VOID_RC_MAX, r_max=VOID_R_MAX, min_size=VOID_MIN,
-            title_prefix=kvoid_label(KVOID_PRESETS[s.kvoid_idx].k), applied_seq=s.get("void_editor_seq", 0),
+            kvoid_text=kvoid_text(KVOID_PRESETS[s.kvoid_idx].k), applied_seq=s.get("void_editor_seq", 0),
             height=900, key="void_editor", default=None,
         )
     if dragged and dragged.get("seq") != s.get("void_editor_seq", 0):
