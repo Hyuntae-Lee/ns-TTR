@@ -359,6 +359,10 @@ st.markdown(
       .st-key-view_bar label > div:first-child { display: none !important; }            /* hide the radio circle */
       .st-key-view_bar label:has(input:checked) { background: #d62728; border-color: #d62728; }
       .st-key-view_bar label:has(input:checked) p { color: #ffffff !important; font-weight: 700; }
+      /* "Advanced" toggle: right end of the bar (left of Streamlit's own Deploy / ⋮ controls), same pill shape */
+      .st-key-view_bar .st-key-adv_btn { position: absolute; top: 0.5rem; right: 8rem; width: auto !important; }
+      .st-key-view_bar .st-key-adv_btn button { border: 1px solid #e3e6ec; border-radius: 999px; background: #ffffff;
+                                                padding: 0.3rem 0.95rem; min-height: 0; line-height: 1.6; }
       /* Streamlit's own header (z-index ~1e6) sits on top of the bar: let clicks pass through it everywhere
          except the actual controls (Deploy / ⋮ menu / status widget). The toolbar itself spans the full width,
          so it must be click-through too, or the view buttons underneath it never receive the click. */
@@ -618,9 +622,25 @@ if st.session_state.result is not None:
 
 # ---- view selector: pinned to the top of the screen and always visible (even before the first run).
 # A radio (not st.tabs) so the selected view survives the rerun triggered by the test buttons.
+# The two verification views are rarely needed: they only appear after the "Advanced" button on the right
+# end of the bar has been switched on.
 VIEWS = ["📈 신호", "🌡 온도장", "✅ 검증 지표", "🔬 Grid convergence"]
+N_MAIN_VIEWS = 2
+
+
+def toggle_advanced():
+    s = st.session_state
+    s.show_advanced = not s.get("show_advanced", False)
+    if not s.show_advanced and s.get("view") in VIEWS[N_MAIN_VIEWS:]:
+        s.view = VIEWS[0]                 # the view being hidden was selected: fall back to the signal view
+
+
 with st.container(key="view_bar"):
-    view = st.radio("보기", VIEWS, horizontal=True, key="view", label_visibility="collapsed")
+    show_advanced = st.session_state.get("show_advanced", False)
+    view = st.radio("보기", VIEWS if show_advanced else VIEWS[:N_MAIN_VIEWS], horizontal=True, key="view",
+                    label_visibility="collapsed")
+    st.button("Advanced ▴" if show_advanced else "Advanced ▾", key="adv_btn", on_click=toggle_advanced,
+              help="검증 지표 · Grid convergence 보기를 표시하거나 숨깁니다.")
 
 res = st.session_state.result
 if res is None:
