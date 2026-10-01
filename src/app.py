@@ -209,14 +209,14 @@ def kvoid_label(k: float) -> str:
 
 
 def void_title(v: VoidSpec) -> str:
-    """One-line void description (k_void + geometry) with the same labels as the settings panel.
+    """One-line void description (k_void + geometry).
     (void_editor.html shows the same labels under the geometry preview; keep the two in step.)"""
     return (kvoid_label(v.k) + f"void 형상: 깊이(윗면 z) {v.depth * 1e6:.4g} μm, "
             f"축에서 벗어난 거리 {v.r_center * 1e6:.4g} μm, 두께 {v.thickness * 1e6:.4g} μm, "
             f"반경 반폭 {v.r_half * 1e6:.4g} μm")
 
 
-# Bounds of the void-geometry inputs [μm]; a dragged shape is clamped to these (in the browser and again here).
+# Bounds of the void geometry [μm]; a dragged shape is clamped to these (in the browser and again here).
 VOID_RC_MAX, VOID_R_MAX, VOID_MIN = 40.0, 40.0, 0.001
 
 
@@ -235,7 +235,7 @@ def void_editor_component():
 
 
 def apply_void_from_editor(v: dict) -> bool:
-    """Write a dragged void (μm, from the editor) into the settings widgets' state. Returns True if changed."""
+    """Write a dragged void (μm, from the editor) into the void geometry state. Returns True if changed."""
     s = st.session_state
     L_um = Geometry().L * 1e6
     thick = min(max(v["thick"], VOID_MIN), L_um)
@@ -397,11 +397,10 @@ def card_header(num: int, title: str):
     st.markdown(f'<div class="card-h"><span class="num">{num}</span>{title}</div>', unsafe_allow_html=True)
 
 
-# ---- initial page (no result yet): geometry preview with a draggable void.  It is created here, BEFORE the
-# sidebar widgets, because a drag must update those widgets' values through session_state, which is only
-# allowed while the widgets have not been instantiated yet on this rerun.  (No st.rerun() afterwards: a
-# forced rerun re-applies the browser's widget states and would undo the update; the figure keeps itself
-# consistent instead, see void_editor.html.)
+# ---- initial page (no result yet): geometry preview with a draggable void — the only place where the void
+# geometry is edited.  It is created here, BEFORE the sidebar, so that the grid / time summary and the warnings
+# shown there are computed from the dragged geometry on the same rerun.  (The figure keeps itself consistent
+# after a drag, see void_editor.html, so no st.rerun() is needed.)
 editor_slot = st.empty()              # cleared below once a result exists (the first run starts without one)
 if st.session_state.result is None:
     s = st.session_state
@@ -443,20 +442,13 @@ with st.sidebar:
     # clicked (or Enter is pressed inside a field), so they never depend on a keypress being
     # delivered to the widget (an IME can swallow Enter) and never trigger intermediate reruns.
     with st.form("settings", border=False):
-        # ---- card 2: void geometry
-        with st.container(border=True):
-            card_header(2, "Void 형상")
-            c1, c2 = st.columns(2)
-            c1.number_input("깊이 (윗면 z) [μm]", min_value=0.0, max_value=500.0, step=0.01, key="void_depth_um", format="%.3f")
-            c2.number_input("두께 [μm]", min_value=0.001, max_value=500.0, step=0.01, key="void_thickness_um", format="%.3f")
-            c1.number_input("축에서 벗어난 거리 [μm]", min_value=0.0, max_value=40.0, step=0.01, key="void_rc_um", format="%.3f",
-                            help="void 중심이 원기둥 축에서 벗어난 거리. 0 이면 축대칭 2D 계산, 0 보다 크면 void 하나가 축 밖에 있는 "
-                                 "3차원(r, θ, z) 계산을 합니다 (펌프·프로브는 축 중심 고정). 방향은 결과에 영향이 없으므로 거리만 지정합니다.")
-            c2.number_input("반경 반폭 [μm]", min_value=0.001, max_value=40.0, step=0.01, key="void_r_um", format="%.3f")
+        # The void geometry (void_depth_um / void_thickness_um / void_rc_um / void_r_um in session_state) has no
+        # inputs here: it comes from the depth preset and is edited by dragging the void on the initial page.
+        # A distance from the axis > 0 switches the void case to the 3-D (r, θ, z) solver.
 
-        # ---- card 3: laser
+        # ---- card 2: laser
         with st.container(border=True):
-            card_header(3, "레이저")
+            card_header(2, "레이저")
             st.markdown(
                 f'<div class="card-body muted">펌프: {PUMP_WAVELENGTH_NM:g} nm 펄스, 사각 (폭 = τp) · '
                 f'프로브: {PROBE_WAVELENGTH_NM:g} nm CW</div>',
@@ -479,9 +471,9 @@ with st.sidebar:
                      "절대값이 중요하면 기준 시료로 보정한 값을 넣으세요.",
             )
 
-        # ---- card 4: layers below the rod
+        # ---- card 3: layers below the rod
         with st.container(border=True):
-            card_header(4, "후면 (산화막 + 열패드)")
+            card_header(3, "후면 (산화막 + 열패드)")
             st.markdown('<div class="card-body muted">구리 아래: 산화막 → 열패드 → 히트싱크(실온 고정)</div>', unsafe_allow_html=True)
             c1, c2 = st.columns(2)
             c1.number_input("산화막 두께 [nm]", min_value=0.0, max_value=50000.0, value=5.0, step=1.0, key="ox_nm", format="%.4g",
@@ -802,7 +794,7 @@ if view == VIEWS[1]:
     fields, gmax = st.session_state[cache_key]
     frame_t = [snaps[i][0] for i in frame_idx]
 
-    # Static title: the void definition (k_void + geometry, same labels as the settings panel). The snapshot
+    # Static title: the void definition (k_void + geometry). The snapshot
     # time is already shown by the slider's current-value readout below the map.
     field_title = void_title(cfg.void) if cfg.void.enabled else "void 없음 (baseline)"
 

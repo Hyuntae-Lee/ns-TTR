@@ -8,7 +8,7 @@
      at least MIN_HIT px, so a few-px-thick void is still grabbable) is split into a 3 x 3 grid — the centre
      cell moves the void, the outer cells drag the corresponding edge(s).
 
-     Streamlit applies the posted value to the settings widgets on the rerun it triggers, but that rerun
+     Streamlit applies the posted value to the void geometry state on the rerun it triggers, but that rerun
      re-renders this component with the args computed BEFORE the value was applied.  So the figure is the
      source of truth right after a drag: the geometry is clamped / rounded here (exactly like
      apply_void_from_editor() in app.py), the description under the map is updated here, and args carrying an older
@@ -78,7 +78,7 @@
   }
   const same = (p, q) => p && q && ["rc", "rh", "depth", "thick"].every(k => Math.abs(p[k] - q[k]) < 1e-9);
 
-  // Sections shown under the map: [heading, [[label, value(, unit)], ...]].  Same labels as the settings panel.
+  // Sections shown under the map: [heading, [[label, value(, unit)], ...]].
   // With a unit, the value is a number drawn right-aligned in a fixed-width column (3 decimals, like the panel).
   function sectionsOf(a, g) {
     const n = x => x.toFixed(3);
