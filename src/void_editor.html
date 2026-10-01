@@ -1,28 +1,38 @@
 <!doctype html>
-<!-- Void geometry editor: a Streamlit custom component (see void_editor_component() in app.py).
-     Draws the copper cylinder cross-section (fixed frame, no zoom / pan) with the void as a Plotly shape
-     that can be moved and resized with the mouse; a drag posts {seq, rc, rh, depth, thick} [μm] back to
-     Streamlit.  Talks to Streamlit through the plain postMessage protocol, so no build step is needed.
+<!-- The MAP: a Streamlit custom component (see void_editor_component() / render_map() in app.py).
+
+     Fixed frame (no zoom / pan) laid out at a 1:1 aspect: the whole rod depth, the copper (|r| <= R) in the
+     middle of the grey silica.  It shows
+       * the void being set up ("pending" geometry) as a shape that can be moved and resized with the mouse;
+         a drag posts {seq, rc, rh, depth, thick} [μm] back to Streamlit, which stores it as the new geometry;
+       * once a result exists (args.result): its temperature snapshots as a heatmap over the copper, with a
+         time slider (and ← / → while the map has the focus), and the void that was actually computed as a
+         dashed outline — visible as soon as the pending void differs from it, i.e. the result is outdated.
+     Talks to Streamlit through the plain postMessage protocol, so no build step is needed.
 
      Mouse handling is done here, not by Plotly's editable-shapes mode: the void's bounding box (enlarged to
      at least MIN_HIT px, so a few-px-thick void is still grabbable) is split into a 3 x 3 grid — the centre
      cell moves the void, the outer cells drag the corresponding edge(s).
 
-     Streamlit applies the posted value to the void geometry state on the rerun it triggers, but that rerun
-     re-renders this component with the args computed BEFORE the value was applied.  So the figure is the
-     source of truth right after a drag: the geometry is clamped / rounded here (exactly like
-     apply_void_from_editor() in app.py), the description under the map is updated here, and args carrying an older
-     `applied_seq` than the last value sent are ignored for the geometry. -->
+     The geometry is clamped / rounded here exactly like apply_void_from_editor() in app.py, so the figure
+     and the stored values agree; args carrying an older `applied_seq` than the last value sent are ignored
+     for the geometry. -->
 <html>
 <head>
 <meta charset="utf-8">
 <script src="plotly.min.js"></script>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #ffffff; }
-  #plot { width: 100%; }
-  /* void description under the map: wraps freely, the frame height follows it (see fitFrame) */
-  #info { font: 14px/1.5 "Source Sans Pro", "Source Sans", "Segoe UI", "Malgun Gothic", sans-serif; color: #31333f;
-          padding: 4px 10px 10px 60px; display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
+  body { font: 14px/1.5 "Source Sans Pro", "Source Sans", "Segoe UI", "Malgun Gothic", sans-serif; color: #31333f; }
+  #plot { width: 100%; outline: none; }
+  /* snapshot selector (only with a result) */
+  #timebar { display: flex; align-items: center; gap: 14px; padding: 0 10px 8px 60px; }
+  #timebar[hidden] { display: none; }
+  #tlabel { white-space: nowrap; min-width: 15em; font-variant-numeric: tabular-nums; }
+  #tlabel b { font-weight: 600; }
+  #tslider { flex: 1; accent-color: #d62728; }
+  /* cards under the map: wrap freely, the frame height follows them (see showInfo) */
+  #info { padding: 4px 10px 10px 60px; display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
   /* one card per topic (k_void | Void 형상): heading on top, values below */
   #info .sec { border: 1px solid #e3e6ec; border-radius: 8px; background: #f7f8fa; padding: 6px 12px 8px 12px; }
   #info .sec-h { font-weight: 700; font-size: 12px; color: #d62728; letter-spacing: 0.02em; margin-bottom: 2px; }
@@ -36,8 +46,7 @@
   #info .sec-b.grid { display: grid; grid-template-columns: auto 4.6em auto auto 4.6em auto; column-gap: 0; row-gap: 2px;
                       align-items: baseline; justify-content: start; }
   #info .sec-b.grid .item { display: contents; }
-  #info .sec-b.grid .k { margin-right: 6px; }
-  #info .sec-b.grid .k:nth-child(n) { white-space: nowrap; }
+  #info .sec-b.grid .k { margin-right: 6px; white-space: nowrap; }
   #info .sec-b.grid .item:nth-child(even) .k { margin-left: 26px; }      /* gap between the two pairs */
   #info .item .v.num { text-align: right; font-variant-numeric: tabular-nums; }
   #info .item .u { color: #6b7280; margin-left: 4px; }
@@ -50,20 +59,25 @@
 </style>
 </head>
 <body>
-<div id="plot"></div>
+<div id="plot" tabindex="0"></div>
+<div id="timebar" hidden><span id="tlabel"></span><input id="tslider" type="range" min="0" max="0" step="1" value="0"></div>
 <div id="info"></div>
 <script>
 (function () {
   const MIN_HIT = 30;                    // px: minimum width / height of the grab area around the void
+  const VOID = 2;                        // index of the pending (draggable) void in layout.shapes, see render()
   const send = (type, data) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data || {}), "*");
   const gd = document.getElementById("plot"), info = document.getElementById("info");
+  const timebar = document.getElementById("timebar"), tlabel = document.getElementById("tlabel"), tslider = document.getElementById("tslider");
   let args = null, ready = false;
   let sentSeq = 0;                       // seq of the last value posted to Streamlit (0 = none yet)
-  // Current void geometry {rc, rh, depth, thick} [μm].  rc is SIGNED here (the ellipse may be drawn on either
+  // Pending void geometry {rc, rh, depth, thick} [μm].  rc is SIGNED here (the ellipse may be drawn on either
   // side of the axis, so nothing jumps while dragging); the model only uses the distance |rc| — the pump is
   // axisymmetric — so Streamlit receives |rc| and `side` remembers which side to draw it on.
   let geom = null, side = 1;
   let drag = null;                       // active drag: {zone, x, y, g0}
+  // Decoded temperature snapshots of the current result (decoded once per result key) and the shown one.
+  let frames = null, framesKey = null, cur = 0;
 
   const r3 = x => Math.round(x * 1000) / 1000;
 
@@ -76,10 +90,12 @@
       rh: r3(Math.min(Math.max(g.rh, a.min_size), a.r_max)),
     };
   }
-  const same = (p, q) => p && q && ["rc", "rh", "depth", "thick"].every(k => Math.abs(p[k] - q[k]) < 1e-9);
+  const KEYS = ["rc", "rh", "depth", "thick"];
+  const same = (p, q) => p && q && KEYS.every(k => Math.abs(p[k] - q[k]) < 1e-9);
+  const sameDistance = (p, q) => p && q && KEYS.every(k => Math.abs(Math.abs(p[k]) - Math.abs(q[k])) < 1e-9);
 
   // Sections shown under the map: [heading, [[label, value(, unit)], ...]].
-  // With a unit, the value is a number drawn right-aligned in a fixed-width column (3 decimals, like the panel).
+  // With a unit, the value is a number drawn right-aligned in a fixed-width column (3 decimals).
   function sectionsOf(a, g) {
     const n = x => x.toFixed(3);
     return [
@@ -90,20 +106,20 @@
     ];
   }
 
-  function shapeOf(g) {
-    return {
-      type: "circle", xref: "x", yref: "y",
-      x0: g.rc - g.rh, x1: g.rc + g.rh, y0: g.depth, y1: g.depth + g.thick,
-      line: { color: "magenta", width: 2 }, fillcolor: "rgba(255, 0, 255, 0.18)",
-    };
+  function ellipse(g, style) {
+    return Object.assign({ type: "circle", xref: "x", yref: "y",
+                           x0: g.rc - g.rh, x1: g.rc + g.rh, y0: g.depth, y1: g.depth + g.thick }, style);
   }
-  // relayout update for the existing shape.  NB: {"shapes[0]": {...}} would INSERT a new shape at index 0
+  // relayout update for the pending void.  NB: {"shapes[i]": {...}} would INSERT a new shape at index i
   // (Plotly's array-container semantics) and leave the old one behind; attribute paths update in place.
   function shapeUpdate(g) {
-    return { "shapes[0].x0": g.rc - g.rh, "shapes[0].x1": g.rc + g.rh,
-             "shapes[0].y0": g.depth, "shapes[0].y1": g.depth + g.thick };
+    const p = "shapes[" + VOID + "].";
+    const u = {};
+    u[p + "x0"] = g.rc - g.rh; u[p + "x1"] = g.rc + g.rh; u[p + "y0"] = g.depth; u[p + "y1"] = g.depth + g.thick;
+    return u;
   }
-  // Cards under the map + iframe height = map + however much height the cards need at the current width.
+
+  // Cards under the map + iframe height = map + time bar + however much height the cards need at this width.
   function showInfo(g) {
     const el = (cls, text) => { const e = document.createElement("div"); e.className = cls; if (text !== undefined) e.textContent = text; return e; };
     info.replaceChildren(...sectionsOf(args, g).map(function (sec) {
@@ -124,26 +140,73 @@
       box.appendChild(body);
       return box;
     }));
-    send("streamlit:setFrameHeight", { height: args.height + info.offsetHeight });
+    send("streamlit:setFrameHeight", { height: args.height + timebar.offsetHeight + info.offsetHeight });
   }
 
-  function render() {
-    const a = args, R = a.R, L = a.L;
-    // Geometry from the args, unless they predate the last value we sent (then keep the dragged shape).
-    if (geom === null || a.applied_seq >= sentSeq) {
-      geom = { rc: side * a.rc, rh: a.rh, depth: a.depth, thick: a.thick };
+  // ---- temperature snapshots -----------------------------------------------------------------------------
+  // result.data: base64 of little-endian uint16, frames x nz x nx, value = ΔT / zmax * 65535.
+  function decode(res) {
+    const bin = atob(res.data), nx = res.x.length, nz = res.z.length, scale = res.zmax / 65535, out = [];
+    let p = 0;
+    for (let f = 0; f < res.n; f++) {
+      const rows = new Array(nz);
+      for (let j = 0; j < nz; j++) {
+        const row = new Float32Array(nx);
+        for (let i = 0; i < nx; i++, p += 2) row[i] = (bin.charCodeAt(p) | (bin.charCodeAt(p + 1) << 8)) * scale;
+        rows[j] = row;
+      }
+      out.push(rows);
     }
-    const data = [];                       // no traces: the figure is only the rod cross-section + the void shape
-    // Fixed frame laid out like the temperature map: 1:1 aspect, the whole rod depth (0..L) filling the
-    // height, the copper (|r| <= R) drawn navy (= the map's ΔT = 0 colour) in the middle and the grey silica
-    // around it.  The axes cannot be zoomed or panned; only the void shape (shapes[0]) is interactive.
+    return out;
+  }
+
+  function showTime() {
+    const res = args.result;
+    const b = document.createElement("b");
+    b.textContent = res.t[cur] + " " + res.tunit;
+    tlabel.replaceChildren("스냅샷 t = ", b, "  (" + (cur + 1) + " / " + res.n + ")");
+  }
+
+  function setFrame(k) {
+    const res = args && args.result;
+    if (!res || !frames) return;
+    k = Math.min(res.n - 1, Math.max(0, k));
+    if (k === cur) return;
+    cur = k;
+    tslider.value = String(k);
+    showTime();
+    Plotly.restyle(gd, { z: [frames[k]] }, [0]);
+  }
+
+  // ---- figure --------------------------------------------------------------------------------------------
+  function render() {
+    const a = args, R = a.R, L = a.L, res = a.result || null;
+    if (res && res.key !== framesKey) { frames = decode(res); framesKey = res.key; cur = res.init; }
+    if (!res) { frames = null; framesKey = null; }
+    const runVoid = res && res.void ? res.void : null;       // the void the shown temperatures were computed with
+    // Pending geometry from the args, unless they predate the last value we sent (then keep the dragged shape).
+    if (geom === null || a.applied_seq >= sentSeq) {
+      const g = { rc: a.rc, rh: a.rh, depth: a.depth, thick: a.thick };
+      if (runVoid && sameDistance(g, runVoid)) side = 1;     // unchanged since the run: draw it where the heat map has it
+      geom = { rc: side * g.rc, rh: g.rh, depth: g.depth, thick: g.thick };
+    }
+    const data = res ? [{
+      type: "heatmap", x: res.x, y: res.z, z: frames[cur], colorscale: a.colorscale, zmin: 0, zmax: res.zmax, zauto: false,
+      colorbar: { title: { text: "ΔT [K]" }, thickness: 12, len: 0.9 },
+      hovertemplate: "r=%{x:.2f} μm<br>z=%{y:.2f} μm<br>ΔT=%{z:.4g} K<extra></extra>",
+    }] : [];
     const layout = {
       xaxis: { title: "r [μm]", range: [-R, R], constrain: "range", fixedrange: true, zeroline: false },
       yaxis: { title: "z (깊이) [μm]", range: [L, 0], scaleanchor: "x", scaleratio: 1, constrain: "range", fixedrange: true },
+      // shapes[0]: copper at rest (navy = the map's ΔT = 0 colour), under the heatmap
+      // shapes[1]: the computed void (dashed) — coincides with the pending one until the void is changed
+      // shapes[VOID = 2]: the pending void, the only interactive element
       shapes: [
-        shapeOf(geom),
         { type: "rect", xref: "x", yref: "y", x0: -R, x1: R, y0: 0, y1: L, layer: "below",
           fillcolor: "#141466", line: { width: 0 } },
+        ellipse(runVoid || { rc: 0, rh: 1, depth: 0, thick: 1 },
+                { visible: !!runVoid, line: { color: "#ffffff", width: 1.5, dash: "dash" }, fillcolor: "rgba(0,0,0,0)" }),
+        ellipse(geom, { line: { color: "magenta", width: 2 }, fillcolor: "rgba(255, 0, 255, 0.18)" }),
       ],
       dragmode: false,
       height: a.height, width: window.innerWidth, margin: { l: 60, r: 10, t: 20, b: 50 },
@@ -151,10 +214,12 @@
     };
     const config = { scrollZoom: false, displayModeBar: false, doubleClick: false, responsive: false };
     Plotly.react(gd, data, layout, config).then(function () { ready = true; });
+    timebar.hidden = !res;
+    if (res) { tslider.max = String(res.n - 1); tslider.value = String(cur); showTime(); }
     showInfo(geom);
   }
 
-  // ---- mouse interaction -------------------------------------------------------------------------------
+  // ---- mouse interaction ---------------------------------------------------------------------------------
   // Zone under the mouse: {col: 'l'|'c'|'r', row: 't'|'c'|'b'} inside the (enlarged) void box, else null.
   function zoneAt(clientX, clientY) {
     if (!ready || !gd._fullLayout) return null;
@@ -197,8 +262,7 @@
   // shape dragging does).  Going through Plotly.relayout on every mouse move leaves stale paths behind
   // for a frame (afterimages); the layout is updated once, on mouseup.
   function drawLive(g) {
-    // shapes[0] only: the copper rectangle (shapes[1], lower layer) comes first in DOM order
-    const path = gd.querySelector('.shapelayer .shape-group[data-index="0"] path');
+    const path = gd.querySelector('.shapelayer .shape-group[data-index="' + VOID + '"] path');
     if (!path) return;
     const xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis;
     const x0 = xa._offset + xa.d2p(g.rc - g.rh), x1 = xa._offset + xa.d2p(g.rc + g.rh);
@@ -210,6 +274,7 @@
 
   gd.addEventListener("mousedown", function (e) {
     if (e.button !== 0) return;
+    gd.focus({ preventScroll: true });                       // ← / → then step the snapshots
     const z = zoneAt(e.clientX, e.clientY);
     if (!z) return;
     e.preventDefault(); e.stopPropagation();
@@ -234,6 +299,15 @@
     showInfo(g);
     sentSeq = Date.now();                                    // unique per drag, also across iframe reloads
     send("streamlit:setComponentValue", { value: Object.assign({ seq: sentSeq }, g, { rc: Math.abs(g.rc) }), dataType: "json" });
+  });
+
+  // ---- snapshot selection --------------------------------------------------------------------------------
+  tslider.addEventListener("input", function () { setFrame(parseInt(tslider.value, 10)); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    if (e.target === tslider || !frames) return;             // the slider steps by itself
+    e.preventDefault();
+    setFrame(cur + (e.key === "ArrowRight" ? 1 : -1));
   });
 
   window.addEventListener("resize", function () { if (args) { Plotly.relayout(gd, { width: window.innerWidth }); showInfo(geom); } });

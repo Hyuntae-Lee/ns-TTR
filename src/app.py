@@ -4,10 +4,11 @@ Run locally with:  streamlit run app.py
 """
 from __future__ import annotations
 
-import json
+import base64
 import math
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from dataclasses import replace
 
@@ -17,7 +18,6 @@ import plotly.graph_objects as go
 from plotly.offline import get_plotlyjs
 import streamlit as st
 import streamlit.components.v1 as components
-from scipy.interpolate import RegularGridInterpolator
 
 from ttr_sim import BottomStack, DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec
 from ttr_sim.analytic import center_step_response
@@ -40,87 +40,6 @@ TEMP_COLORSCALE = [
     [0.00, "#141466"], [0.14, "#0000ff"], [0.32, "#00c8ff"], [0.50, "#00e000"],
     [0.68, "#ffff00"], [0.85, "#ff8c00"], [1.00, "#ff0000"],
 ]
-
-
-# Browser-side behaviour for the temperature-field figure.  FIELD_PARENT_JS is injected ONCE into the
-# main page as a <script> (so it runs in the page's own realm and survives Streamlit re-renders and view
-# switches); FIELD_TOOLBAR_HTML is a small same-origin iframe with zoom / snapshot buttons that call it.
-FIELD_PARENT_JS = r"""
-(function () {
-  if (window.__ttrField) return;
-  const isFieldGd = g => !!(g && g._fullLayout && g._fullLayout.meta && g._fullLayout.meta.tag === 'ttr-field' &&
-      g._transitionData && g._transitionData._frames && g._transitionData._frames.length > 1);
-  const findGd = () => Array.from(document.querySelectorAll('.js-plotly-plot')).find(isFieldGd) || null;
-  const gdOf = el => { const g = (el && el.closest) ? el.closest('.js-plotly-plot') : null; return isFieldGd(g) ? g : null; };
-  const anim = { mode: 'immediate', frame: { duration: 0, redraw: true }, transition: { duration: 0 } };
-
-  const api = {
-    findGd: findGd,
-    step: function (dir) {
-      const gd = findGd(); if (!gd) return;
-      const n = gd._transitionData._frames.length;
-      const sl = gd._fullLayout.sliders && gd._fullLayout.sliders[0];
-      const cur = sl ? sl.active : 0;
-      const k = Math.min(n - 1, Math.max(0, cur + dir));
-      if (k === cur) return;
-      Plotly.relayout(gd, { 'sliders[0].active': k });
-      Plotly.animate(gd, [String(k)], anim);
-    },
-    reset: function () {
-      const gd = findGd(); if (!gd) return;
-      const m = gd._fullLayout.meta;
-      Plotly.relayout(gd, { 'xaxis.range': [-m.R, m.R], 'yaxis.range': [m.L, 0] });
-    },
-    focus: function () {
-      const gd = findGd(); if (!gd) return;
-      if (!gd.hasAttribute('tabindex')) gd.setAttribute('tabindex', '0');
-      gd.style.outline = 'none';
-      gd.focus({ preventScroll: true });
-      gd.style.boxShadow = '0 0 0 2px #d62728';
-    }
-  };
-  window.__ttrField = api;
-
-  // Plain wheel over the figure = page scroll; Ctrl+wheel = Plotly zoom (only ctrl-wheel reaches Plotly's
-  // scrollZoom handler, which itself prevents the browser's page-zoom default).
-  document.addEventListener('wheel', function (e) {
-    if (gdOf(e.target) && !e.ctrlKey) e.stopImmediatePropagation();
-  }, { capture: true, passive: false });
-
-  // Clicking on the figure gives it keyboard focus (red outline) so the arrow keys go straight to it.
-  document.addEventListener('mousedown', function (e) {
-    if (gdOf(e.target)) setTimeout(api.focus, 0);
-  }, true);
-  document.addEventListener('focusout', function (e) {
-    const gd = gdOf(e.target); if (gd && e.target === gd) gd.style.boxShadow = '';
-  }, true);
-
-  // Left/Right arrows step the snapshot while the field figure is on screen (unless typing in a field).
-  document.addEventListener('keydown', function (e) {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    if (!gdOf(e.target)) {
-      const tag = (e.target && e.target.tagName || '').toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select' || (e.target && e.target.isContentEditable)) return;
-      if (!findGd()) return;
-    }
-    e.preventDefault(); e.stopImmediatePropagation();
-    api.step(e.key === 'ArrowRight' ? 1 : -1);
-  }, true);
-})();
-"""
-
-FIELD_TOOLBAR_HTML = """
-<script>
-(function () {
-  const W = window.parent, D = W.document;
-  if (!W.__ttrField) {
-    const s = D.createElement('script');
-    s.textContent = __PARENT_CODE__;
-    D.head.appendChild(s);
-  }
-})();
-</script>
-""".replace("__PARENT_CODE__", json.dumps(FIELD_PARENT_JS))
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -151,7 +70,8 @@ def preset_defaults(idx: int) -> dict:
 
 
 def on_preset_change():
-    """A preset change re-fills the void geometry and pulse-energy defaults for the new depth."""
+    """A preset change re-fills the void geometry and pulse-energy defaults for the new depth.  An existing
+    result is kept: the MAP shows the new void over it and the result is flagged as outdated until 적용."""
     for key, val in preset_defaults(st.session_state.preset_idx).items():
         st.session_state[key] = val
 
@@ -204,26 +124,15 @@ def kvoid_text(k: float) -> str:
     return f"{k:g} W/m·K" + (" (공기)" if k == KVOID_PRESETS[0].k else "")
 
 
-def kvoid_label(k: float) -> str:
-    return f"k_void = {kvoid_text(k)}   ·   "
-
-
-def void_title(v: VoidSpec) -> str:
-    """One-line void description (k_void + geometry).
-    (void_editor.html shows the same labels under the geometry preview; keep the two in step.)"""
-    return (kvoid_label(v.k) + f"void 형상: 깊이(윗면 z) {v.depth * 1e6:.4g} μm, "
-            f"축에서 벗어난 거리 {v.r_center * 1e6:.4g} μm, 두께 {v.thickness * 1e6:.4g} μm, "
-            f"반경 반폭 {v.r_half * 1e6:.4g} μm")
-
-
 # Bounds of the void geometry [μm]; a dragged shape is clamped to these (in the browser and again here).
 VOID_RC_MAX, VOID_R_MAX, VOID_MIN = 40.0, 40.0, 0.001
 
 
 @st.cache_resource
 def void_editor_component():
-    """Register the drag-to-edit void figure (void_editor.html + a copy of plotly.js, served from a temp
-    directory so the bundled exe never needs to write next to its own files)."""
+    """Register the MAP component: rod cross-section with the draggable void and, once a result exists, the
+    temperature snapshots (void_editor.html + a copy of plotly.js, served from a temp directory so the
+    bundled exe never needs to write next to its own files)."""
     d = Path(tempfile.gettempdir()) / "ns_ttr_void_editor"
     d.mkdir(parents=True, exist_ok=True)
     js_src = get_plotlyjs()
@@ -248,6 +157,70 @@ def apply_void_from_editor(v: dict) -> bool:
     changed = any(abs(s[k] - val) > 1e-9 for k, val in new.items())
     s.update(new)
     return changed
+
+
+MAP_MAX_VALUES = 2_000_000       # snapshots are thinned so that frames x cells stays below this
+
+
+def field_payload(res: dict) -> dict:
+    """Temperature snapshots of a result, packed for the MAP component.
+
+    Display plane: the copper cross-section |x| <= R_cu, 0 <= z <= L.  2-D results are mirrored about the
+    axis; 3-D results already hold the (x, z) plane through the off-axis void (void on the x > 0 side).
+    ΔT is quantised to 16 bit (0 .. zmax) and sent base64-encoded: frames x nz x nx, little-endian."""
+    cfg, base, void = res["cfg"], res["base"], res["void"]
+    T0 = cfg.numerics.T0
+    tscale, tunit = time_unit(cfg.t_end)
+    v_on = cfg.void.enabled
+    snaps = void.snapshots if v_on else base.snapshots
+    grid = void.grid if v_on else base.grid
+    ir = int(np.argmin(np.abs(grid.r_faces - cfg.geometry.R_cu)))      # number of radial cells inside the copper
+    nz = int(np.searchsorted(grid.z_c, cfg.geometry.L))               # axial cells inside the rod (not the bottom stack)
+    x_um = np.concatenate([-grid.r_c[:ir][::-1], grid.r_c[:ir]]) * 1e6
+    z_um = grid.z_c[:nz] * 1e6
+    void_3d = v_on and void.is_3d
+
+    def plane_at(i: int) -> np.ndarray:
+        T = snaps[i][1][:nz] - T0
+        if void_3d:                                                     # 3-D snapshot = (nz, 2 nr) plane
+            return T[:, grid.nr - ir: grid.nr + ir]
+        f = T[:, :ir]
+        return np.concatenate([f[:, ::-1], f], axis=1)
+
+    step = max(1, int(math.ceil(len(snaps) * nz * len(x_um) / MAP_MAX_VALUES)))
+    frame_idx = sorted(set(range(0, len(snaps), step)) | {len(snaps) - 1})
+    fields = np.stack([plane_at(i) for i in frame_idx]).astype(np.float32)
+    zmax = max(float(fields.max()), 1e-30)
+    q = np.clip(np.rint(fields / zmax * 65535.0), 0, 65535).astype("<u2")
+    v = cfg.void
+    return dict(
+        key=str(res["run_id"]), x=np.round(x_um, 4).tolist(), z=np.round(z_um, 4).tolist(), n=len(frame_idx),
+        t=[f"{snaps[i][0] * tscale:.3g}" for i in frame_idx], tunit=tunit, zmax=zmax,
+        init=min(len(frame_idx) - 1, len(frame_idx) // 3),
+        data=base64.b64encode(q.tobytes()).decode("ascii"),
+        void=dict(rc=v.r_center * 1e6, rh=v.r_half * 1e6, depth=v.depth * 1e6, thick=v.thickness * 1e6) if v_on else None,
+    )
+
+
+def render_map(res: dict | None):
+    """The MAP: rod cross-section with the draggable void (the pending geometry in session_state) and, if a
+    result is given, its temperature snapshots with a time slider.  A drag is picked up from session_state at
+    the top of the next rerun (see below), not from this call's return value."""
+    s = st.session_state
+    geo = Geometry()
+    payload = None
+    if res is not None:
+        cached = s.get("_field_payload")
+        if cached is None or cached[0] != res["run_id"]:
+            cached = s["_field_payload"] = (res["run_id"], field_payload(res))
+        payload = cached[1]
+    void_editor_component()(
+        R=geo.R_cu * 1e6, L=geo.L * 1e6,
+        rc=s.void_rc_um, rh=s.void_r_um, depth=s.void_depth_um, thick=s.void_thickness_um,
+        rc_max=VOID_RC_MAX, r_max=VOID_R_MAX, min_size=VOID_MIN,
+        kvoid_text=kvoid_text(KVOID_PRESETS[s.kvoid_idx].k), applied_seq=s.get("void_editor_seq", 0),
+        result=payload, colorscale=TEMP_COLORSCALE, height=900, key="void_editor", default=None,
+    )
 
 
 def progress_ui(container):
@@ -342,9 +315,12 @@ st.markdown(
       section[data-testid="stSidebar"] [data-testid="stExpander"] summary { font-weight: 700; font-size: 1.05rem; padding: 0.85rem 1.1rem; }
       section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover { color: #262730; }
       /* fixed-size charts: the keyed containers keep their pixel width regardless of the window size */
-      .st-key-fixed_sig_rr, .st-key-fixed_sig_temp { width: 900px !important; min-width: 900px !important; max-width: none !important; }
+      .st-key-fixed_sig_rr, .st-key-fixed_sig_temp { width: 450px !important; min-width: 450px !important; max-width: none !important; }
+      /* signal view: ΔR/R chart and ΔT chart in one row at their fixed widths */
+      .st-key-sig_row { flex-direction: row !important; flex-wrap: nowrap !important; align-items: flex-start;
+                        width: max-content !important; max-width: none !important; gap: 1.5rem; }
+      .st-key-sig_row > div { flex: 0 0 auto !important; width: auto !important; }   /* Streamlit's layout wrappers default to 100 % */
       .st-key-fixed_sig_dT, .st-key-fixed_sig_contrast { width: 440px !important; min-width: 440px !important; max-width: none !important; }
-      .st-key-fixed_field_map { width: 1122px !important; min-width: 1122px !important; max-width: none !important; }
       [class*="st-key-fixed_"] [data-testid="stPlotlyChart"], [class*="st-key-fixed_"] .js-plotly-plot,
       [class*="st-key-fixed_"] .plot-container { width: 100% !important; min-width: 100% !important; }
       section.stMain .block-container, [data-testid="stMainBlockContainer"] { overflow-x: auto; }
@@ -359,10 +335,13 @@ st.markdown(
       .st-key-view_bar label > div:first-child { display: none !important; }            /* hide the radio circle */
       .st-key-view_bar label:has(input:checked) { background: #d62728; border-color: #d62728; }
       .st-key-view_bar label:has(input:checked) p { color: #ffffff !important; font-weight: 700; }
-      /* "Advanced" toggle: right end of the bar (left of Streamlit's own Deploy / ⋮ controls), same pill shape */
-      .st-key-view_bar .st-key-adv_btn { position: absolute; top: 0.5rem; right: 8rem; width: auto !important; }
-      .st-key-view_bar .st-key-adv_btn button { border: 1px solid #e3e6ec; border-radius: 999px; background: #ffffff;
-                                                padding: 0.3rem 0.95rem; min-height: 0; line-height: 1.6; }
+      /* "Advanced" menu: gear icon at the right end of the bar (left of Streamlit's own Deploy / ⋮ controls),
+         same pill shape as the tabs; red while one of its views is shown */
+      .st-key-view_bar [class*="st-key-adv_menu_"] { position: absolute; top: 0.5rem; right: 8rem; width: auto !important; }
+      .st-key-view_bar [class*="st-key-adv_menu_"] [data-testid="stPopover"] button {
+        border: 1px solid #e3e6ec; border-radius: 999px; background: #f7f8fa; padding: 0.3rem 0.7rem; min-height: 0; line-height: 1.6; }
+      .st-key-view_bar [class*="st-key-adv_menu_on"] [data-testid="stPopover"] button {
+        background: #d62728; border-color: #d62728; color: #ffffff; }
       /* Streamlit's own header (z-index ~1e6) sits on top of the bar: let clicks pass through it everywhere
          except the actual controls (Deploy / ⋮ menu / status widget). The toolbar itself spans the full width,
          so it must be click-through too, or the view buttons underneath it never receive the click. */
@@ -401,27 +380,13 @@ def card_header(num: int, title: str):
     st.markdown(f'<div class="card-h"><span class="num">{num}</span>{title}</div>', unsafe_allow_html=True)
 
 
-# ---- initial page (no result yet): geometry preview with a draggable void — the only place where the void
-# geometry is edited.  It is created here, BEFORE the sidebar, so that the grid / time summary and the warnings
-# shown there are computed from the dragged geometry on the same rerun.  (The figure keeps itself consistent
-# after a drag, see void_editor.html, so no st.rerun() is needed.)
-editor_slot = st.empty()              # cleared below once a result exists (the first run starts without one)
-if st.session_state.result is None:
-    s = st.session_state
-    geo = Geometry()
-    with editor_slot.container():
-        # Geometry preview: void = drag the centre to move, an edge to resize; either side of the axis is fine
-        # (the pump is axisymmetric, only the distance from the axis is used).
-        dragged = void_editor_component()(
-            R=geo.R_cu * 1e6, L=geo.L * 1e6,
-            rc=s.void_rc_um, rh=s.void_r_um, depth=s.void_depth_um, thick=s.void_thickness_um,
-            rc_max=VOID_RC_MAX, r_max=VOID_R_MAX, min_size=VOID_MIN,
-            kvoid_text=kvoid_text(KVOID_PRESETS[s.kvoid_idx].k), applied_seq=s.get("void_editor_seq", 0),
-            height=900, key="void_editor", default=None,
-        )
-    if dragged and dragged.get("seq") != s.get("void_editor_seq", 0):
-        s.void_editor_seq = dragged["seq"]
-        apply_void_from_editor(dragged)
+# ---- void dragged on the MAP: the component's latest value is read from session_state here, BEFORE the
+# sidebar, so that the grid / time summary and the warnings shown there (and the component itself, drawn
+# further down) all use the dragged geometry on the same rerun.
+dragged = st.session_state.get("void_editor")
+if dragged and dragged.get("seq") != st.session_state.get("void_editor_seq", 0):
+    st.session_state.void_editor_seq = dragged["seq"]
+    apply_void_from_editor(dragged)
 
 with st.sidebar:
     st.title("Nanosecond Transient Thermoreflectance Simulator")
@@ -508,7 +473,7 @@ with st.sidebar:
                      "정확도를 더 높이려면 2~3 %, 계산을 빨리 하려면 10 % 정도가 적당합니다. (내부적으로 8스텝 블록마다 적용)",
             )
             st.slider("온도장 스냅샷 개수", min_value=12, max_value=100, value=12, step=1, key="n_snapshots",
-                      help="관측 시간창을 균등 분할하여 저장하는 온도장 개수. 많을수록 온도장 탭의 시간 간격이 촘촘해집니다 (메모리 사용 증가).")
+                      help="관측 시간창을 균등 분할하여 저장하는 온도장 개수. 많을수록 MAP 탭의 시간 간격이 촘촘해집니다 (메모리 사용 증가).")
 
         # ---- read-only summary of what the current settings imply (all widgets above exist in this run)
         cfg_preview = build_config()
@@ -604,6 +569,7 @@ with st.sidebar:
 
 
 # ----------------------------------------------------------------------------- run
+run_finished = False                  # True on the rerun in which a calculation has just completed
 if apply:
     cfg = build_config()
     box = st.container()
@@ -611,40 +577,64 @@ if apply:
     try:
         base, void, sig = run_pair(cfg, progress=cb)
         ana = analytic_comparison(base)
-        st.session_state.result = dict(cfg=cfg, base=base, void=void, sig=sig, ana=ana)
+        st.session_state.result = dict(cfg=cfg, base=base, void=void, sig=sig, ana=ana, run_id=time.time_ns())
         st.session_state.conv = None
+        run_finished = True
     except Exception as e:  # noqa: BLE001
         st.exception(e)
     finally:
         bar.empty()
-if st.session_state.result is not None:
-    editor_slot.empty()               # the geometry editor belongs to the initial page only
 
 # ---- view selector: pinned to the top of the screen and always visible (even before the first run).
-# A radio (not st.tabs) so the selected view survives the rerun triggered by the test buttons.
-# The two verification views are rarely needed: they only appear after the "Advanced" button on the right
-# end of the bar has been switched on.
-VIEWS = ["📈 신호", "🌡 온도장", "✅ 검증 지표", "🔬 Grid convergence"]
-N_MAIN_VIEWS = 2
+# The two main views are a radio styled as tab buttons (not st.tabs, so the selected view survives the rerun
+# triggered by the test buttons).  The two verification views are rarely needed: they are items of the menu
+# behind the gear icon at the right end of the bar.  session_state.active_view is the view being shown;
+# the radio (main_view) has no selection while a menu view is shown.
+VIEW_MAP, VIEW_SIGNAL, VIEW_CHECKS, VIEW_GRID = "🌡 MAP", "📈 신호", "✅ 검증 지표", "🔬 Grid convergence"
+MAIN_VIEWS, MENU_VIEWS = [VIEW_MAP, VIEW_SIGNAL], [VIEW_CHECKS, VIEW_GRID]
 
 
-def toggle_advanced():
+def toggle_reference():
+    st.session_state.show_reference = not st.session_state.get("show_reference", False)
+
+
+def show_view(name: str):
     s = st.session_state
-    s.show_advanced = not s.get("show_advanced", False)
-    if not s.show_advanced and s.get("view") in VIEWS[N_MAIN_VIEWS:]:
-        s.view = VIEWS[0]                 # the view being hidden was selected: fall back to the signal view
+    s.active_view = name
+    s.main_view = name if name in MAIN_VIEWS else None
+    s.menu_gen = s.get("menu_gen", 0) + 1         # a fresh menu element: the open popover closes
 
 
+def on_main_view_change():
+    if st.session_state.main_view is not None:
+        st.session_state.active_view = st.session_state.main_view
+
+
+if "active_view" not in st.session_state:
+    show_view(MAIN_VIEWS[0])                      # the first main view is the default
+if run_finished:
+    show_view(VIEW_SIGNAL)                        # a finished run opens the signal view (set before the radio is created)
+view = st.session_state.active_view
 with st.container(key="view_bar"):
-    show_advanced = st.session_state.get("show_advanced", False)
-    view = st.radio("보기", VIEWS if show_advanced else VIEWS[:N_MAIN_VIEWS], horizontal=True, key="view",
-                    label_visibility="collapsed")
-    st.button("Advanced ▴" if show_advanced else "Advanced ▾", key="adv_btn", on_click=toggle_advanced,
-              help="검증 지표 · Grid convergence 보기를 표시하거나 숨깁니다.")
+    st.radio("보기", MAIN_VIEWS, index=None, horizontal=True, key="main_view", on_change=on_main_view_change,
+             label_visibility="collapsed")
+    # key suffix: "on" while a menu view is shown (the icon is highlighted), and a counter that changes
+    # whenever a view is picked, so the popover is re-created closed instead of staying open
+    menu_key = f"adv_menu_{'on' if view in MENU_VIEWS else 'off'}_{st.session_state.get('menu_gen', 0)}"
+    with st.container(key=menu_key):
+        with st.popover(":material/settings:"):       # no tooltip: it would cover the first menu item
+            st.caption("Advanced")
+            for name in MENU_VIEWS:
+                st.button(name, key=f"menu_{MENU_VIEWS.index(name)}", on_click=show_view, args=(name,),
+                          type="primary" if view == name else "secondary", use_container_width=True)
 
 res = st.session_state.result
 if res is None:
-    st.stop()           # the initial page (geometry editor) was already drawn above the sidebar code
+    if view == VIEW_MAP:
+        render_map(None)
+    else:
+        st.info("아직 계산 결과가 없습니다. 왼쪽 패널에서 프리셋을 고르고 MAP 에서 void 를 조정한 뒤 **적용** 을 누르세요.")
+    st.stop()
 
 cfg: SimConfig = res["cfg"]
 base, void, sig, ana = res["base"], res["void"], res["sig"], res["ana"]
@@ -675,11 +665,15 @@ for w in diag["warnings"]:
     st.warning(w)
 if not cfg.void.enabled:
     st.info("void 가 비활성화되어 있어 신호 지표는 0 입니다 (baseline 만 계산).")
+if cfg_preview != cfg:
+    st.warning("프리셋 또는 void 형상이 계산 이후 변경되었습니다. 표시된 결과는 변경 전 설정(MAP 의 점선 void)에 대한 것이며, "
+               "**적용** 을 눌러야 다시 계산됩니다.")
 
 
 # ----------------------------------------------------------------------------- signal tab
-if view == VIEWS[0]:
-    SIG_W = 900          # fixed pixel width so curve shapes do not stretch with the window size
+if view == VIEW_SIGNAL:
+    SIG_W = 900          # fixed pixel widths so curve shapes do not stretch with the window size:
+    MAIN_W = SIG_W // 2  # the two main charts (side by side); the two below use SIG_W // 2 - 10
     t = base.times * tscale
 
     def apply_x(fig_):
@@ -705,16 +699,16 @@ if view == VIEWS[0]:
         yaxis_title="ΔR/R [×10⁻⁴]", height=420, legend=dict(orientation="h", y=-0.2),
     )
     apply_x(figr)
-    figr.update_layout(width=SIG_W, height=420, autosize=False)
-    with st.container(key="fixed_sig_rr"):
+    figr.update_layout(width=MAIN_W, height=420, autosize=False)
+    # The two main charts sit side by side (ΔR/R left, ΔT right), each at its fixed width; the row is as wide
+    # as both together, so a narrow window scrolls horizontally instead of squeezing them (see the CSS).
+    sig_row = st.container(key="sig_row")
+    with sig_row.container(key="fixed_sig_rr"):
         st.plotly_chart(figr, use_container_width=False)
-    i_pk = int(np.argmax(np.abs(rr_base)))
-    txt = f"baseline 피크 ΔR/R = {rr_base[i_pk] / SCALE:.3e} ({rr_base[i_pk]:+.3g}×10⁻⁴)"
-    if cfg.void.enabled:
-        j_pk = int(np.argmax(np.abs(rr_diff)))
-        txt += (f"  ·  void 에 의한 변화 피크 = {rr_diff[j_pk] / SCALE:.3e} ({rr_diff[j_pk]:+.3g}×10⁻⁴) "
-                f"at t = {void.times[j_pk] * tscale:.3g} {tunit}")
-    st.caption(txt + ". 열반사 계수의 부호에 따라 신호 부호가 뒤집힐 수 있으며, 크기는 ΔT 에 비례합니다 (선형 모델).")
+        # "Reference": shows / hides the two supporting charts below (void signal ΔT and relative contrast)
+        show_reference = cfg.void.enabled and st.session_state.get("show_reference", False)
+        if cfg.void.enabled:
+            st.button("Reference ▴" if show_reference else "Reference ▾", key="ref_btn", on_click=toggle_reference)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=t, y=base.dT_probe, name="baseline (void 없음)", line=dict(color="#1f77b4")))
@@ -728,11 +722,11 @@ if view == VIEWS[0]:
     )
     add_pulse_trace(fig, base, tscale)
     apply_x(fig)
-    fig.update_layout(width=SIG_W, height=420, autosize=False)
-    with st.container(key="fixed_sig_temp"):
+    fig.update_layout(width=MAIN_W, height=420, autosize=False)
+    with sig_row.container(key="fixed_sig_temp"):
         st.plotly_chart(fig, use_container_width=False)
 
-    if cfg.void.enabled:
+    if show_reference:
         c1, c2 = st.columns(2)
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(x=void.times * tscale, y=sig["dT"], name="ΔT = void − baseline", line=dict(color="#d62728")))
@@ -758,126 +752,12 @@ if view == VIEWS[0]:
             f"신호 피크는 보통 τ_void 이후에 나타납니다."
         )
 
-# ----------------------------------------------------------------------------- field tab
-if view == VIEWS[1]:
-    src_choice = "void 케이스"      # fixed: the field view always shows the void case (baseline / difference views removed)
-    snaps = void.snapshots if cfg.void.enabled else base.snapshots
-    is_diff = src_choice.startswith("차이")
-    grid = void.grid if cfg.void.enabled else base.grid
-    g_plot = base.grid if src_choice == "baseline" else grid
-
-    # Display region: the whole copper cylinder, |x| <= 40 μm, 0 <= z <= 500 μm.  2-D results are
-    # mirrored about the axis; 3-D results already hold the (x, z) plane through the off-axis void.
-    R_cu_um, L_um = cfg.geometry.R_cu * 1e6, cfg.geometry.L * 1e6
-    ir = int(np.argmin(np.abs(g_plot.r_faces - cfg.geometry.R_cu)))      # number of radial cells inside the copper
-    x_um = np.concatenate([-g_plot.r_c[:ir][::-1], g_plot.r_c[:ir]]) * 1e6
-    z_um = g_plot.z_c * 1e6
-    void_3d = cfg.void.enabled and void.is_3d
-
-    def mirror(f: np.ndarray) -> np.ndarray:
-        f = f[:, :ir]
-        return np.concatenate([f[:, ::-1], f], axis=1)
-
-    def base_plane(i: int, on_grid) -> np.ndarray:
-        """Mirrored baseline ΔT plane (nz, 2 ir), interpolated onto `on_grid` if it differs."""
-        Tb_ = base.snapshots[i][1] - T0
-        if on_grid is not base.grid:
-            itp = RegularGridInterpolator((base.grid.z_c, base.grid.r_c), Tb_, bounds_error=False, fill_value=None)
-            ZZ, RR = np.meshgrid(on_grid.z_c, on_grid.r_c, indexing="ij")
-            Tb_ = itp(np.stack([ZZ.ravel(), RR.ravel()], axis=1)).reshape(len(on_grid.z_c), len(on_grid.r_c))
-        return mirror(Tb_)
-
-    def plane_at(i: int) -> np.ndarray:
-        """Full-width ΔT plane (nz, 2 ir) for snapshot i of the selected quantity."""
-        if src_choice == "baseline":
-            return base_plane(i, base.grid)
-        Tv = snaps[i][1] - T0
-        nr_v = grid.nr
-        vplane = Tv[:, nr_v - ir: nr_v + ir] if void_3d else mirror(Tv)   # 3-D snapshot = (nz, 2 nr) plane
-        return vplane - base_plane(i, grid) if is_diff else vplane
-
-    # All snapshots are embedded as Plotly animation frames: moving the in-figure slider swaps the frame
-    # data in the browser only (no Streamlit rerun, no redraw of the figure, zoom/pan preserved).
-    # Frames are thinned if the total payload would be too large.
-    MAX_VALUES = 2_000_000
-    per_frame = len(z_um) * len(x_um)
-    step = max(1, int(math.ceil(len(snaps) * per_frame / MAX_VALUES)))
-    frame_idx = sorted(set(range(0, len(snaps), step)) | {len(snaps) - 1})
-    cache_key = ("field_frames", id(res), src_choice)
-    if cache_key not in st.session_state:
-        fields = []
-        for i in frame_idx:
-            fields.append(plane_at(i).astype(np.float32))
-        gmax = max(max(float(np.max(np.abs(f))) for f in fields), 1e-30)
-        st.session_state[cache_key] = (fields, gmax)
-    fields, gmax = st.session_state[cache_key]
-    frame_t = [snaps[i][0] for i in frame_idx]
-
-    # Static title: the void definition (k_void + geometry). The snapshot
-    # time is already shown by the slider's current-value readout below the map.
-    field_title = void_title(cfg.void) if cfg.void.enabled else "void 없음 (baseline)"
-
-    init = min(len(fields) - 1, len(fields) // 3)
-    colorscale = "RdBu_r" if is_diff else TEMP_COLORSCALE
-    heat_kw = dict(
-        x=x_um, y=z_um, colorscale=colorscale, zmid=0.0 if is_diff else None,
-        zmin=-gmax if is_diff else 0.0, zmax=gmax, zauto=False,
-        colorbar=dict(title="ΔT [K]", thickness=12, len=0.9),
-        hovertemplate="r=%{x:.2f} μm<br>z=%{y:.2f} μm<br>ΔT=%{z:.4g} K<extra></extra>",
-    )
-    frames = [
-        go.Frame(name=str(k), data=[go.Heatmap(z=fields[k], **heat_kw)])
-        for k in range(len(fields))
-    ]
-    fig = go.Figure(data=[go.Heatmap(z=fields[init], **heat_kw)], frames=frames)
-
-    if cfg.void.enabled and src_choice != "baseline":
-        v = cfg.void
-        for sgn in (1,):                      # single void; an off-axis void lies on the x > 0 side of the plane
-            xa, xb = sgn * (v.r_center - v.r_half) * 1e6, sgn * (v.r_center + v.r_half) * 1e6
-            fig.add_shape(type="circle" if v.shape == "ellipse" else "rect",
-                          x0=min(xa, xb), x1=max(xa, xb), y0=v.depth * 1e6, y1=v.z_bottom * 1e6,
-                          line=dict(color="magenta", width=2), fillcolor="rgba(0,0,0,0)")
-    # Copper boundary markers (the heatmap covers |r| <= R_cu; the grey area outside is silica, not plotted).
-    for xr in (-R_cu_um, R_cu_um):
-        fig.add_vline(x=xr, line=dict(color="gray", dash="dot", width=1))
-
-    anim_args = dict(mode="immediate", frame=dict(duration=0, redraw=True), transition=dict(duration=0))
-    slider_steps = [
-        dict(method="animate", args=[[str(k)], anim_args], label=f"{frame_t[k] * tscale:.3g}")
-        for k in range(len(fields))
-    ]
-    # Canvas: height fixed; width = 3x the width needed for the 1:1 full-cylinder view.
-    # constrain="range": the plot area fills the whole canvas and the 1:1 aspect is kept by widening the
-    # r-axis range instead of shrinking the plot area, so the tick labels stay tied to the map coordinates.
-    # layout.meta tags the figure for the browser-side handlers in FIELD_JS.
-    PLOT_H = 900
-    base_w = int(PLOT_H * (2 * R_cu_um) / L_um) + 230
-    fig.update_layout(
-        title=dict(text=field_title, font=dict(size=14)), meta=dict(tag="ttr-field", R=R_cu_um, L=L_um),
-        xaxis=dict(title="r [μm]", range=[-R_cu_um, R_cu_um], constrain="range", zeroline=False),
-        yaxis=dict(title="z (깊이) [μm]", range=[L_um, 0], scaleanchor="x", scaleratio=1, constrain="range"),
-        dragmode="pan", uirevision="field", height=PLOT_H, width=3 * base_w,
-        margin=dict(l=60, r=10, t=50, b=90), plot_bgcolor="#e8e8e8",
-        sliders=[dict(
-            active=init, steps=slider_steps, x=0.0, y=-0.02, len=1.0, pad=dict(t=40, b=0),
-            currentvalue=dict(prefix="스냅샷 t = ", suffix=f" {tunit}", visible=True, xanchor="left"),
-        )],
-    )
-    field_box = st.container(key="fixed_field_map")
-    field_box.plotly_chart(
-        fig, use_container_width=False,
-        config={
-            "scrollZoom": True, "displaylogo": False, "doubleClick": "reset",
-            # always-visible modebar reduced to the single "reset axes" (전체 보기) icon, overlaid top-right
-            "displayModeBar": True,
-            "modeBarButtonsToRemove": ["zoom2d", "pan2d", "select2d", "lasso2d", "zoomIn2d", "zoomOut2d", "autoScale2d", "toImage"],
-        },
-    )
-    components.html(FIELD_TOOLBAR_HTML, height=0)   # invisible: installs the Ctrl+wheel / arrow-key handlers (see FIELD_PARENT_JS)
+# ----------------------------------------------------------------------------- MAP tab
+if view == VIEW_MAP:
+    render_map(res)
 
 # ----------------------------------------------------------------------------- validation tab
-if view == VIEWS[2]:
+if view == VIEW_CHECKS:
     st.subheader("에너지 보존")
     c1, c2, c3 = st.columns(3)
     c1.metric("baseline: (E_stored − E_in)/E_in", fmt_sci(base.energy_error))
@@ -999,7 +879,7 @@ if view == VIEWS[2]:
         )
 
 # ----------------------------------------------------------------------------- grid convergence tab
-if view == VIEWS[3]:
+if view == VIEW_GRID:
     st.markdown(
         "같은 물리 조건에서 격자를 **2배 조밀**(Δz, Δr 절반, Fo 고정 → Δt 1/4)하게 재계산하고, "
         "추가로 **거친 격자**(Δ×2)와 **시간 간격 절반**(Fo/2) 케이스를 계산하여 수치 파라미터 민감도를 보여줍니다."
