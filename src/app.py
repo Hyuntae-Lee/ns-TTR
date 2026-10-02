@@ -20,12 +20,12 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from ttr_sim import BottomStack, DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec
-from ttr_sim.analytic import center_step_response
+from ttr_sim.analytic import center_step_response, center_step_response_flat
 from ttr_sim.materials import (
     AIR, COPPER, COPPER_ABSORPTION_DEPTH, COPPER_C_TR_PROBE, COPPER_REFLECTIVITY_DEFAULT, FUSED_SILICA,
     PROBE_WAVELENGTH_NM, PUMP_WAVELENGTH_NM,
 )
-from ttr_sim.presets import fmt_length, fmt_time
+from ttr_sim.presets import D_TH_PRESET, fmt_length, fmt_time
 from ttr_sim.solver import MAT_VOID, build_grid, material_map
 from ttr_sim.solver3d import theta_faces
 from ttr_sim.validation import analytic_comparison, grid_convergence, run_pair
@@ -64,6 +64,7 @@ def preset_defaults(idx: int) -> dict:
         void_thickness_um=round(min(0.5 * d_um, 0.5 * (500.0 - d_um)), 3),
         void_r_um=min(round(2 * d_um, 3), 40.0),
         void_rc_um=0.0,                                   # presets describe an on-axis void
+        tau_p_us=p.tau_p * 1e6,                           # pulse width: the preset's 2 d²/D until the user edits it
         energy_nJ=default_energy_nJ(p.tau_p),
         t_end_us=default_window_us(p, d_um),
     )
@@ -83,6 +84,25 @@ def default_window_us(p, depth_um: float) -> float:
     return float(round(t / mag) * mag)
 
 
+PULSE_WINDOW_FACTOR = 5.0        # the observation window covers at least 5 τp (the same rule as the preset default)
+
+
+def ensure_window_covers_pulse():
+    """Lengthen the observation window when the pulse width has just been changed and no longer fits in it.
+    Called before the widgets are created, so the window field itself shows the new value.  It only reacts
+    to a CHANGE of the pulse width: afterwards the window can still be set shorter by hand (to zoom in on the
+    charts).  The window is never shortened here, and the 0.5 % tolerance leaves the presets' own (3-digit
+    rounded) defaults untouched."""
+    s = st.session_state
+    if s.get("_tau_seen") == s.tau_p_us:
+        return
+    s._tau_seen = s.tau_p_us
+    need = PULSE_WINDOW_FACTOR * s.tau_p_us
+    if s.t_end_us < need * (1.0 - 0.005):
+        mag = 10 ** math.floor(math.log10(need)) / 100
+        s.t_end_us = float(math.ceil(need / mag - 1e-9) * mag)        # rounded up to 3 significant digits
+
+
 def init_state():
     if "preset_idx" not in st.session_state:
         st.session_state.preset_idx = 2
@@ -91,6 +111,10 @@ def init_state():
     st.session_state.setdefault("kvoid_idx", 0)     # default: real air value 0.026 W/(m K)
     st.session_state.setdefault("result", None)
     st.session_state.setdefault("conv", None)
+
+
+# Pump beam profile across the surface (radio labels in the laser card)
+BEAM_GAUSSIAN, BEAM_FLAT = "Gaussian", "Flat-top (균일)"
 
 
 def build_config() -> SimConfig:
@@ -102,12 +126,19 @@ def build_config() -> SimConfig:
         r_center=s.void_rc_um * UM, r_half=s.void_r_um * UM, k=k_void, rho_cp=AIR.rho_cp,
         shape="ellipse",                                  # fixed: spheroidal void (bubble-like)
     )
+    # Pulse width: the preset's value unless edited in the laser card.  The surface-layer spacing keeps the
+    # preset rule dz = sqrt(D tau_p)/10 for the pulse width actually used, so dt = tau_p/N still holds.
+    tau_p, dz = p.tau_p, p.dz
+    tau_user = float(s.get("tau_p_us", p.tau_p * 1e6)) * 1e-6
+    if abs(tau_user - p.tau_p) > 1e-9 * p.tau_p:
+        tau_p, dz = tau_user, math.sqrt(D_TH_PRESET * tau_user) / 10.0
     laser = Laser(
-        tau_p=p.tau_p, profile="square", energy=s.energy_nJ * 1e-9, w=s.spot_um * UM,
+        tau_p=tau_p, profile="square", energy=s.energy_nJ * 1e-9, w=s.spot_um * UM,
+        beam="flat" if s.get("beam_shape") == BEAM_FLAT else "gaussian",
         reflectivity=s.reflectivity, probe_w=s.probe_um * UM, c_tr=float(s.get("c_tr", COPPER_C_TR_PROBE)),
     )
     numerics = Numerics(
-        dz=p.dz,                                              # surface-layer spacing sqrt(D tau_p)/10 from the preset
+        dz=dz,                                                # surface-layer spacing sqrt(D tau_p)/10
         fo=100.0 / float(s.get("steps_per_pulse", 200)),      # dz = sqrt(D tau_p)/10  =>  dt = tau_p/N  <=>  Fo = 100/N
         t_end_mode="absolute", t_end_abs=float(s.get("t_end_us", default_window_us(p, s.void_depth_um))) * 1e-6,
         dt_growth=1.0 + float(s.get("dt_growth_pct", 5.0)) / 100.0, n_snapshots=int(s.get("n_snapshots", 12)),   # stretch: fixed 1.15
@@ -118,6 +149,24 @@ def build_config() -> SimConfig:
         pad_thickness=float(s.get("pad_um", 200.0)) * UM, pad_k=float(s.get("pad_k", 62.5)),
     )
     return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics, bottom=bottom)
+
+
+def void_info_html(v: VoidSpec) -> str:
+    """k_void / Void 형상 cards for a computed void: the same two cards, labels and number format as under
+    the MAP (void_editor.html draws those in the browser; keep the two in step)."""
+    def item(label: str, um: float) -> str:
+        return f'<span class="k">{label}</span><span class="v num">{um:.3f}</span><span class="u">μm</span>'
+    if not v.enabled:
+        return '<div class="void-info"><div class="sec"><div class="sec-h">Void</div>void 없음 (baseline)</div></div>'
+    return (
+        '<div class="void-info">'
+        f'<div class="sec"><div class="sec-h">k_void</div><span class="k">void 열전도율</span>'
+        f'<span class="v">{kvoid_text(v.k)}</span></div>'
+        '<div class="sec"><div class="sec-h">Void 형상</div><div class="grid">'
+        + item("깊이 (윗면 z)", v.depth * 1e6) + item("축에서 벗어난 거리", v.r_center * 1e6)
+        + item("두께", v.thickness * 1e6) + item("반경 반폭", v.r_half * 1e6)
+        + '</div></div></div>'
+    )
 
 
 def kvoid_text(k: float) -> str:
@@ -218,7 +267,7 @@ def render_map(res: dict | None):
         R=geo.R_cu * 1e6, L=geo.L * 1e6,
         rc=s.void_rc_um, rh=s.void_r_um, depth=s.void_depth_um, thick=s.void_thickness_um,
         rc_max=VOID_RC_MAX, r_max=VOID_R_MAX, min_size=VOID_MIN,
-        kvoid_text=kvoid_text(KVOID_PRESETS[s.kvoid_idx].k), applied_seq=s.get("void_editor_seq", 0),
+        applied_seq=s.get("void_editor_seq", 0),
         result=payload, colorscale=TEMP_COLORSCALE, height=900, key="void_editor", default=None,
     )
 
@@ -261,6 +310,7 @@ def fmt_sci(x: float) -> str:
 
 # ----------------------------------------------------------------------------- sidebar
 init_state()
+ensure_window_covers_pulse()
 # Selectboxes (control and the dropdown list, which Plotly-independent BaseWeb renders in a portal)
 # use a monospace font so the padded preset columns line up; white-space: pre keeps the padding.
 st.markdown(
@@ -361,6 +411,26 @@ st.markdown(
       .card-h .num { color: #d62728; font-weight: 600; font-size: 0.85rem; margin-right: 0.85rem; vertical-align: 0.05rem; }
       .card-body { color: #444; padding-left: 1.9rem; font-size: 1.0rem; }
       .card-body.muted { color: #555; margin: -0.2rem 0 0.7rem 0; }
+      /* result summary: spreadsheet-like grid (header row / header column shaded, numbers right-aligned) */
+      table.summary { border-collapse: collapse; font-size: 15px; margin: 0.2rem 0 0.2rem 0; }
+      table.summary th, table.summary td { border: 1px solid #c9cdd6 !important; padding: 6px 16px; white-space: nowrap; }
+      table.summary thead th { background: #eef0f4; font-weight: 700; text-align: center; color: #31333f; }
+      table.summary tbody th { background: #f7f8fa; font-weight: 600; text-align: left; color: #31333f; cursor: help; }
+      table.summary td { text-align: right; font-variant-numeric: tabular-nums; background: #ffffff; min-width: 7.5em; }
+      table.summary thead th.help { cursor: help; }
+      .summary-note { color: #808495; font-size: 12px; margin-bottom: 0.6rem; }
+      /* k_void / Void 형상 cards on the signal view, under the charts (same look as under the MAP) */
+      .void-info { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; font-size: 14px; line-height: 1.5; color: #31333f;
+                   margin-bottom: 1rem; }
+      .void-info .sec { border: 1px solid #e3e6ec; border-radius: 8px; background: #f7f8fa; padding: 6px 12px 8px 12px; }
+      .void-info .sec-h { font-weight: 700; font-size: 12px; color: #d62728; letter-spacing: 0.02em; margin-bottom: 2px; }
+      .void-info .k { color: #6b7280; margin-right: 6px; white-space: nowrap; }
+      .void-info .v { font-weight: 600; }
+      .void-info .u { color: #6b7280; margin-left: 4px; }
+      .void-info .grid { display: grid; grid-template-columns: auto 4.6em auto auto 4.6em auto; row-gap: 2px;
+                         align-items: baseline; justify-content: start; }
+      .void-info .grid .v.num { text-align: right; font-variant-numeric: tabular-nums; }
+      .void-info .grid .k:nth-of-type(6n+4) { margin-left: 26px; }           /* gap between the two pairs */
       section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button {
         border-radius: 12px; font-weight: 700; font-size: 1.1rem; padding: 0.7rem 0;
       }
@@ -407,6 +477,20 @@ with st.sidebar:
     # k_void is fixed to the real air value (kvoid_idx = 0, set with the other defaults) and is not shown
     # here; it is printed in the temperature-map title instead.
 
+    # ---- card 2: observation window.  Outside the form: it is the time-axis range of the signal charts, so a
+    # change is applied at once (zoom into / beyond the computed span); the calculation itself only runs to
+    # the new window at the next 적용.
+    with st.container(border=True):
+        card_header(2, "관측 시간창")
+        st.number_input(
+            "관측 시간창 [μs]", min_value=1e-3, max_value=1e6, step=1.0, key="t_end_us", format="%.4g",
+            label_visibility="collapsed",
+            help="신호 그래프의 시간축 끝 [μs]. 바꾸면 그래프에 바로 반영됩니다: 계산된 시간보다 짧으면 그 구간만 확대해 보여 주고, "
+                 "길면 축만 늘어나며 곡선은 계산된 구간까지만 그려집니다 (적용을 누르면 새 창까지 다시 계산). "
+                 "프리셋을 바꾸면 그 깊이에 맞는 기본값 max(5·τp, 4·d²/D) 로 다시 채워지고, 펄스폭을 늘려 5·τp 가 창을 넘으면 자동으로 "
+                 "늘어납니다. void 깊이를 바꿔 신호 피크(≈2·d²/D)가 창을 넘으면 아래에 경고가 표시됩니다.",
+        )
+
     # All numeric inputs live in a form: typed values are collected when the 적용 button is
     # clicked (or Enter is pressed inside a field), so they never depend on a keypress being
     # delivered to the widget (an IME can swallow Enter) and never trigger intermediate reruns.
@@ -415,20 +499,30 @@ with st.sidebar:
         # inputs here: it comes from the depth preset and is edited by dragging the void on the initial page.
         # A distance from the axis > 0 switches the void case to the 3-D (r, θ, z) solver.
 
-        # ---- card 2: laser
+        # ---- card 3: laser
         with st.container(border=True):
-            card_header(2, "레이저")
+            card_header(3, "레이저")
             st.markdown(
                 f'<div class="card-body muted">펌프: {PUMP_WAVELENGTH_NM:g} nm 펄스, 사각 (폭 = τp) · '
                 f'프로브: {PROBE_WAVELENGTH_NM:g} nm CW</div>',
                 unsafe_allow_html=True,
             )
+            st.radio("펌프 빔 형상", [BEAM_GAUSSIAN, BEAM_FLAT], horizontal=True, key="beam_shape",
+                     help="Gaussian: 일반적인 레이저 빔. 세기가 중심에서 가장 크고 반경(1/e²)에서 13.5 % 로 줄어듭니다. "
+                          "Flat-top: 빔 정형 광학계로 만든 균일 빔. 반경 안에서는 세기가 일정하고 밖은 0 입니다 "
+                          "(반경 40 μm 이면 구리 단면 전체가 고르게 가열됨). 두 경우 모두 펄스 에너지는 빔 전체의 총 에너지입니다. "
+                          "해석해 비교(검증 지표)는 Gaussian 빔에서만 제공됩니다.")
             c1, c2 = st.columns(2)
-            c1.number_input("펄스 에너지 [nJ]", min_value=1e-3, max_value=1e7, key="energy_nJ", format="%.4g")
-            c2.number_input("펌프 1/e² 반경 [μm]", min_value=1.0, max_value=40.0, value=10.0, step=1.0, key="spot_um")
-            c1.number_input("프로브 1/e² 반경 [μm]", min_value=0.0, max_value=40.0, value=5.0, step=0.5, key="probe_um",
+            c1.number_input("펄스폭 τp [μs]", min_value=1e-4, max_value=1e5, key="tau_p_us", format="%.4g",
+                            help="펌프 펄스의 폭. 프리셋을 고르면 그 깊이에 맞는 값 τp = 2·d²/D 로 채워지며, 여기서 바꿀 수 있습니다. "
+                                 "표면층 격자 Δz = √(D·τp)/10 과 펄스 중 시간 간격 Δt = τp/N 은 입력한 펄스폭을 따라 다시 정해집니다. "
+                                 "관측 시간창이 5·τp 보다 짧으면 5·τp 로 자동으로 늘어납니다 (줄어들지는 않음). 펄스 에너지는 자동으로 바뀌지 않습니다.")
+            c2.number_input("펄스 에너지 [nJ]", min_value=1e-3, max_value=1e7, key="energy_nJ", format="%.4g")
+            c1.number_input("펌프 반경 [μm]", min_value=1.0, max_value=40.0, value=10.0, step=1.0, key="spot_um",
+                            help="Gaussian 빔: 1/e² 반경.  Flat-top 빔: 균일한 원판의 반경 (가장자리).")
+            c2.number_input("프로브 1/e² 반경 [μm]", min_value=0.0, max_value=40.0, value=5.0, step=0.5, key="probe_um",
                             help="0이면 중심 셀 온도")
-            c2.number_input(f"구리 반사율 R (펌프 {PUMP_WAVELENGTH_NM:g} nm)", min_value=0.0, max_value=0.99,
+            c1.number_input(f"구리 반사율 R (펌프 {PUMP_WAVELENGTH_NM:g} nm)", min_value=0.0, max_value=0.99,
                             value=COPPER_REFLECTIVITY_DEFAULT, step=0.05, key="reflectivity",
                             help=f"펌프 {PUMP_WAVELENGTH_NM:g} nm 에서의 구리 반사율 (깨끗한 표면 약 0.6). 흡수 flux = I₀(1−R). "
                                  f"광학 흡수깊이 {COPPER_ABSORPTION_DEPTH * 1e9:.0f} nm 도 이 파장 기준입니다.")
@@ -460,12 +554,6 @@ with st.sidebar:
                                   "Fo = D·Δt/Δz² = 0.5 에 해당합니다. Crank–Nicolson은 무조건 안정이지만 N 이 작으면(Δt 가 크면) "
                                   "급격한 transient 에서 정확도가 떨어집니다. 펄스가 끝난 뒤의 Δt 는 아래 증가율로 커집니다.")
             st.number_input(
-                "관측 시간창 [μs]", min_value=1e-3, max_value=1e6, step=1.0, key="t_end_us", format="%.4g",
-                help="그래프의 시간축 끝. 프리셋을 바꾸면 그 프리셋의 대표 깊이에 맞는 기본값 max(5·τp, 4·d²/D) 이 다시 채워지고, "
-                     "그 외에는 바꾸기 전까지 고정되므로 void 크기·위치·에너지 등을 바꿔도 x축이 같아 결과를 나란히 비교할 수 있습니다. "
-                     "void 깊이를 바꿔 신호 피크(≈2·d²/D)가 창을 넘으면 아래에 경고가 표시됩니다.",
-            )
-            st.number_input(
                 "펄스 종료 후 Δt 증가율 [% / 스텝]", min_value=0.0, max_value=50.0, value=5.0, step=1.0, key="dt_growth_pct", format="%.0f",
                 help="펄스가 끝나면 온도 변화가 점점 느려지므로 시간 간격을 스텝마다 이 비율만큼 늘려 갑니다. "
                      "5 % 면 Δt 가 항상 '지금까지 흐른 시간의 약 5 %' 로 유지되어, 1 ms 관측창도 약 300 스텝이면 충분합니다. "
@@ -491,11 +579,17 @@ with st.sidebar:
         P_abs = P_inc * (1.0 - la_p.reflectivity)
         q_abs = la_p.I0 * (1.0 - la_p.reflectivity) * f_peak
         cu = cfg_preview.copper
-        # lower estimate: semi-infinite copper, Gaussian spot (3-D spreading);  upper estimate: add the
-        # 1-D rod term that appears once the heat is confined radially by the silica (flux spread over pi R^2)
-        dT_lo = float(center_step_response(la_p.tau_p, q_abs, la_p.w, cu))
-        q_rod = P_abs / (math.pi * cfg_preview.geometry.R_cu ** 2)
-        dT_hi = dT_lo + 2.0 * q_rod * math.sqrt(cu.alpha * la_p.tau_p / math.pi) / cu.k
+        if la_p.beam == "flat":
+            # lower estimate: semi-infinite copper heated by a uniform disc (centre value);  upper estimate: the
+            # same flux applied to the whole surface (1-D heating, no lateral spreading at all)
+            dT_lo = float(center_step_response_flat(la_p.tau_p, q_abs, la_p.w, cu))
+            dT_hi = 2.0 * q_abs * math.sqrt(cu.alpha * la_p.tau_p / math.pi) / cu.k
+        else:
+            # lower estimate: semi-infinite copper, Gaussian spot (3-D spreading);  upper estimate: add the
+            # 1-D rod term that appears once the heat is confined radially by the silica (flux spread over pi R^2)
+            dT_lo = float(center_step_response(la_p.tau_p, q_abs, la_p.w, cu))
+            q_rod = P_abs / (math.pi * cfg_preview.geometry.R_cu ** 2)
+            dT_hi = dT_lo + 2.0 * q_rod * math.sqrt(cu.alpha * la_p.tau_p / math.pi) / cu.k
         P_fmt = lambda p: f"{p * 1e3:.3g} mW" if p < 1 else f"{p:.3g} W"                     # noqa: E731
 
         with st.expander("계산된 격자 · 시간 정보  (읽기 전용)"):
@@ -643,31 +737,49 @@ T0 = cfg.numerics.T0
 diag = void.diagnostics
 
 # ----------------------------------------------------------------------------- headline metrics
-rr_peak = cfg.laser.c_tr * sig["peak_dT"]
+# A spreadsheet-like table: one row per quantity; columns for ΔT and ΔR/R (= (dR/dT)/R × ΔT), the relative
+# contrast at the signal peak (next to the absolute difference it belongs to) and the time at which the value
+# occurs.  The explanations are tooltips on the row / column headings.
+c_tr = cfg.laser.c_tr
 t_ref = 2 * cfg.void.depth ** 2 / cfg.copper.alpha
-at_end = sig["t_peak_contrast"] >= 0.98 * cfg.t_end          # ratio still rising at the end of the window
-m = st.columns(5)
-m[0].metric("피크 ΔT (baseline)", f"{sig['peak_rise_base']:.3g} K",
-            help="void 없는 시료의 프로브 가중 표면 온도 상승 최대값. 선형 모델 유효 범위(10 K / 50 K)와 손상 여부 판단에 사용.")
-m[1].metric("void 신호 피크 (ΔT)", f"{sig['peak_dT']:+.3g} K", delta=f"t = {sig['t_peak'] * tscale:.3g} {tunit}", delta_color="off",
-            help=f"프로브 가중 표면 온도의 void − baseline 차이가 가장 큰 값과 그 시각. 절대 신호가 가장 큰 순간 = 측정하기 가장 좋은 시각. "
-                 f"참고: 2·d²/D ≈ {t_ref * tscale:.3g} {tunit}")
-m[2].metric("void 신호 피크 (ΔR/R)", f"{rr_peak * 1e4:+.3g} ×10⁻⁴",
-            help=f"위 온도 차이에 열반사 계수 (dR/dT)/R = {cfg.laser.c_tr:.2e} /K 를 곱한 값. 실험에서 baseline 대비 재야 하는 반사율 변화.")
-m[3].metric("피크 시점 대비", f"{sig['contrast_at_peak'] * 100:+.1f} %",
-            help="신호 피크 시각에서의 (ΔT_void − ΔT_base)/ΔT_base. 절대 신호가 가장 큰 순간에 정상 시료 대비 몇 % 다른가 — 검출 난이도의 실질 척도.")
-m[4].metric("상대 대비 최대", f"{sig['peak_contrast'] * 100:+.1f} %",
-            delta=f"t = {sig['t_peak_contrast'] * tscale:.3g} {tunit}" + (" (창 끝, 상승 중)" if at_end else ""), delta_color="off",
-            help="(ΔT_void − ΔT_base)/ΔT_base 의 시간에 따른 최대값과 그 시각 (baseline 상승이 피크의 0.1 % 이상인 구간). "
-                 "정상 시료가 식은 뒤 void 시료만 뜨겁게 남는 후반에 커지는 경향이 있어 절대 신호는 작을 수 있고, "
-                 "관측창 끝에서 최대이면 창을 늘리면 더 커지는 값입니다.")
+t_base_peak = float(base.times[int(np.argmax(base.dT_probe))])
+rr = lambda dT: f"{c_tr * dT * 1e4:+.3g} ×10⁻⁴"                      # noqa: E731
+tt = lambda t_: f"{t_ * tscale:.3g} {tunit}"                          # noqa: E731
+base_at_peak = float(np.interp(sig["t_peak"], base.times, base.dT_probe))     # baseline ΔT at the void-signal peak time
+contrast_help = ("신호 피크 시각에서의 (void − baseline) / baseline: 왼쪽의 절대 차이를 같은 시각의 baseline 값 "
+                 f"({base_at_peak:.3g} K) 으로 나눈 비율. baseline 이 거의 식은 뒤라면 절대 차이가 아주 작아도 이 비율은 커질 수 "
+                 "있으므로 두 값을 함께 보세요. ΔR/R 은 ΔT 에 상수 계수를 곱한 값이라 대비는 ΔT·ΔR/R 에 공통입니다.")
+# (row heading, tooltip, ΔT, ΔR/R, contrast at the signal peak, time)
+summary_rows = [
+    ("baseline 피크",
+     "void 없는 시료의 프로브 가중 표면 온도 상승 최대값과 그 ΔR/R. 선형 모델 유효 범위(10 K / 50 K)와 손상 여부 판단에 사용.",
+     f"{sig['peak_rise_base']:+.3g} K", rr(sig["peak_rise_base"]), "—", tt(t_base_peak)),
+    ("void 신호 피크 (void − baseline)",
+     "프로브 가중 표면 온도의 void − baseline 차이(절대값)가 가장 큰 값과 그 시각, 그리고 그 ΔR/R (실험에서 baseline 대비 재야 "
+     f"하는 반사율 변화). 절대 신호가 가장 큰 순간 = 측정하기 가장 좋은 시각. 참고: 2·d²/D ≈ {tt(t_ref)}",
+     f"{sig['peak_dT']:+.3g} K", rr(sig["peak_dT"]), f"{sig['contrast_at_peak'] * 100:+.1f} %", tt(sig["t_peak"])),
+]
+if view != VIEW_MAP:                  # the MAP shows only the map itself
+    st.markdown(
+        '<table class="summary"><thead><tr><th></th><th>ΔT</th><th>ΔR/R</th>'
+        f'<th title="{contrast_help}" class="help">피크 시점 대비</th><th>시각</th></tr></thead><tbody>'
+        + "".join(f'<tr><th title="{h}">{name}</th><td>{a}</td><td>{b}</td><td>{c}</td><td>{t_}</td></tr>'
+                  for name, h, a, b, c, t_ in summary_rows)
+        + f'</tbody></table><div class="summary-note">(dR/dT)/R = {c_tr:.2e} /K · 행·열 제목에 마우스를 올리면 설명이 표시됩니다.</div>',
+        unsafe_allow_html=True,
+    )
 for w in diag["warnings"]:
     st.warning(w)
 if not cfg.void.enabled:
     st.info("void 가 비활성화되어 있어 신호 지표는 0 입니다 (baseline 만 계산).")
-if cfg_preview != cfg:
+# pending settings vs. the computed ones, the observation window aside (it only sets the charts' time axis)
+same_window = replace(cfg_preview, numerics=replace(cfg_preview.numerics, t_end_abs=cfg.numerics.t_end_abs))
+if same_window != cfg:
     st.warning("프리셋 또는 void 형상이 계산 이후 변경되었습니다. 표시된 결과는 변경 전 설정(MAP 의 점선 void)에 대한 것이며, "
                "**적용** 을 눌러야 다시 계산됩니다.")
+elif cfg_preview.t_end > cfg.t_end * (1.0 + 1e-9):
+    st.warning(f"관측 시간창({cfg_preview.t_end * tscale:.4g} {tunit})이 계산된 시간({cfg.t_end * tscale:.4g} {tunit})보다 깁니다. "
+               "곡선은 계산된 구간까지만 그려지며, **적용** 을 누르면 새 창까지 다시 계산합니다.")
 
 
 # ----------------------------------------------------------------------------- signal tab
@@ -677,8 +789,9 @@ if view == VIEW_SIGNAL:
     t = base.times * tscale
 
     def apply_x(fig_):
-        """Fixed linear x-range (= observation window) so runs with different conditions line up."""
-        fig_.update_xaxes(range=[0.0, cfg.t_end * tscale])
+        """Fixed linear x-range = the observation window currently set in the panel (so runs with different
+        conditions line up).  It may be shorter or longer than the computed span cfg.t_end."""
+        fig_.update_xaxes(range=[0.0, cfg_preview.t_end * tscale])
     # ---- thermoreflectance signal dR/R = c_tr * dT (probe-weighted)
     c_tr = cfg.laser.c_tr
     SCALE = 1e4                                           # plotted in units of 1e-4
@@ -705,16 +818,13 @@ if view == VIEW_SIGNAL:
     sig_row = st.container(key="sig_row")
     with sig_row.container(key="fixed_sig_rr"):
         st.plotly_chart(figr, use_container_width=False)
-        # "Reference": shows / hides the two supporting charts below (void signal ΔT and relative contrast)
-        show_reference = cfg.void.enabled and st.session_state.get("show_reference", False)
-        if cfg.void.enabled:
-            st.button("Reference ▴" if show_reference else "Reference ▾", key="ref_btn", on_click=toggle_reference)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=t, y=base.dT_probe, name="baseline (void 없음)", line=dict(color="#1f77b4")))
     if cfg.void.enabled:
         fig.add_trace(go.Scatter(x=void.times * tscale, y=void.dT_probe, name=f"void (k_void={cfg.void.k:g})", line=dict(color="#d62728")))
-    fig.add_trace(go.Scatter(x=t, y=ana["analytic"], name="해석해 (semi-infinite Cu)", line=dict(color="gray", dash="dash")))
+    if ana.get("available", True):                    # Gaussian beam only
+        fig.add_trace(go.Scatter(x=t, y=ana["analytic"], name="해석해 (semi-infinite Cu)", line=dict(color="gray", dash="dash")))
     pulse_shading(fig, cfg.laser, tscale)
     fig.update_layout(
         title="프로브 가중 표면 온도 상승", xaxis_title=f"t [{tunit}]",
@@ -726,6 +836,12 @@ if view == VIEW_SIGNAL:
     with sig_row.container(key="fixed_sig_temp"):
         st.plotly_chart(fig, use_container_width=False)
 
+    # under the charts: the void these curves were computed with (same two cards as under the MAP)
+    st.markdown(void_info_html(cfg.void), unsafe_allow_html=True)
+    # "Reference": shows / hides the two supporting charts below (void signal ΔT and relative contrast)
+    show_reference = cfg.void.enabled and st.session_state.get("show_reference", False)
+    if cfg.void.enabled:
+        st.button("Reference ▴" if show_reference else "Reference ▾", key="ref_btn", on_click=toggle_reference)
     if show_reference:
         c1, c2 = st.columns(2)
         fig2 = go.Figure()
@@ -829,30 +945,34 @@ if view == VIEW_CHECKS:
     st.table(pd.DataFrame(rows, columns=["항목", "값"]).set_index("항목"))
 
     st.subheader("해석해 비교 (void 없는 baseline)")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("RMS 상대 편차", f"{ana['rms_rel'] * 100:.2f} %")
-    c2.metric("최대 상대 편차", f"{ana['max_rel'] * 100:.2f} %")
-    c3.metric("피크 상대 편차", fmt_pct(ana["peak_rel"]))
-    for n in ana["notes"]:
-        st.info(n)
-    fa = go.Figure()
-    fa.add_trace(go.Scatter(x=base.times * tscale, y=ana["numeric"], name="수치해 (baseline)", line=dict(color="#1f77b4")))
-    fa.add_trace(go.Scatter(x=base.times * tscale, y=ana["analytic"], name="해석해", line=dict(color="gray", dash="dash")))
-    # the difference is drawn on the SAME axis (a secondary axis with its own scale made a 0.4 % gap look large)
-    fa.add_trace(go.Scatter(x=base.times * tscale, y=ana["numeric"] - ana["analytic"], name="차이 (수치해 − 해석해, 같은 축)",
-                            line=dict(color="#d62728")))
-    fa.add_hline(y=0.0, line=dict(color="gray", width=1))
-    fa.update_layout(xaxis_title=f"t [{tunit}]", yaxis_title="ΔT [K]", height=360, legend=dict(orientation="h", y=-0.25))
-    st.plotly_chart(fa, use_container_width=True)
-    st.caption(
-        "해석해: semi-infinite 균질 구리, 표면 Gaussian flux (Carslaw & Jaeger 형태). "
-        "ΔT(0,0,t) = q₀w/(k√(2π))·arctan(√(8Dt)/w) 의 step 응답을 펄스 파형과 컨볼루션(Duhamel 적분, 미세 시간 격자 FFT). "
-        f"수치해와 같은 프로브 가중치로 평가합니다. 현재 차이: RMS {ana['rms_rel'] * 100:.2f} %, 최대 {ana['max_rel'] * 100:.2f} % (피크 대비) — "
-        "남는 차이는 격자·시간 이산화 오차이며 가열이 가장 급한 구간에서 최대가 됩니다."
-    )
-    with st.expander("해석해 비교 지표 읽는 법", expanded=False):
-        st.markdown(
-            """
+    if not ana.get("available", True):
+        st.info("해석해 비교는 Gaussian 빔에서만 제공됩니다 (해석해가 Gaussian 표면 flux 에 대한 것). "
+                "Flat-top 빔의 결과는 위의 에너지 보존과 Grid convergence 로 확인하세요.")
+    else:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("RMS 상대 편차", f"{ana['rms_rel'] * 100:.2f} %")
+        c2.metric("최대 상대 편차", f"{ana['max_rel'] * 100:.2f} %")
+        c3.metric("피크 상대 편차", fmt_pct(ana["peak_rel"]))
+        for n in ana["notes"]:
+            st.info(n)
+        fa = go.Figure()
+        fa.add_trace(go.Scatter(x=base.times * tscale, y=ana["numeric"], name="수치해 (baseline)", line=dict(color="#1f77b4")))
+        fa.add_trace(go.Scatter(x=base.times * tscale, y=ana["analytic"], name="해석해", line=dict(color="gray", dash="dash")))
+        # the difference is drawn on the SAME axis (a secondary axis with its own scale made a 0.4 % gap look large)
+        fa.add_trace(go.Scatter(x=base.times * tscale, y=ana["numeric"] - ana["analytic"], name="차이 (수치해 − 해석해, 같은 축)",
+                                line=dict(color="#d62728")))
+        fa.add_hline(y=0.0, line=dict(color="gray", width=1))
+        fa.update_layout(xaxis_title=f"t [{tunit}]", yaxis_title="ΔT [K]", height=360, legend=dict(orientation="h", y=-0.25))
+        st.plotly_chart(fa, use_container_width=True)
+        st.caption(
+            "해석해: semi-infinite 균질 구리, 표면 Gaussian flux (Carslaw & Jaeger 형태). "
+            "ΔT(0,0,t) = q₀w/(k√(2π))·arctan(√(8Dt)/w) 의 step 응답을 펄스 파형과 컨볼루션(Duhamel 적분, 미세 시간 격자 FFT). "
+            f"수치해와 같은 프로브 가중치로 평가합니다. 현재 차이: RMS {ana['rms_rel'] * 100:.2f} %, 최대 {ana['max_rel'] * 100:.2f} % (피크 대비) — "
+            "남는 차이는 격자·시간 이산화 오차이며 가열이 가장 급한 구간에서 최대가 됩니다."
+        )
+        with st.expander("해석해 비교 지표 읽는 법", expanded=False):
+            st.markdown(
+                """
 **기대하는 모습** 두 곡선은 거의 겹쳐야 하고, 차이 곡선은 0 근처에서 작은 진동만 보여야 합니다.
 격자를 2배 조밀하게 하면(Grid convergence 탭) 차이가 약 1/4 로 줄어드는 2차 수렴이 정상입니다.
 
@@ -876,7 +996,7 @@ if view == VIEW_CHECKS:
 
 **피크 상대 편차** 표면 온도 피크의 높이 차이입니다. 펄스 동안 표면 셀 온도를 셀 면으로 외삽하는 보정이 들어가 있어 권장 격자에서 1 % 이내여야 합니다.
             """
-        )
+            )
 
 # ----------------------------------------------------------------------------- grid convergence tab
 if view == VIEW_GRID:

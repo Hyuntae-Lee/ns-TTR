@@ -56,8 +56,11 @@ def run_pair(cfg: SimConfig, progress: Progress = None, store_fields: bool = Tru
 
 
 def analytic_comparison(base: SimResult) -> dict:
-    """Compare the numerical void-free baseline with the semi-infinite analytic solution."""
+    """Compare the numerical void-free baseline with the semi-infinite analytic solution.
+    The analytic solution is for a Gaussian spot; for a flat-top beam the result has available=False."""
     cfg = base.config
+    if cfg.laser.beam != "gaussian":
+        return dict(available=False, t=base.times, numeric=base.dT_probe, analytic=None, notes=[])
     pw = probe_weights(cfg, base.grid)
     ana = analytic_probe_signal(base.grid.r_c, pw, base.times, cfg.laser, cfg.copper)
     num = base.dT_probe
@@ -74,7 +77,8 @@ def analytic_comparison(base: SimResult) -> dict:
         )
     if d["L_diff"] > 0.8 * cfg.geometry.L:
         notes.append("열이 후면(z=L)에 도달하여 semi-infinite 가정이 성립하지 않습니다.")
-    return dict(t=base.times, analytic=ana, numeric=num, rms_rel=rms_rel, max_rel=max_rel, peak_rel=peak_rel, notes=notes)
+    return dict(available=True, t=base.times, analytic=ana, numeric=num, rms_rel=rms_rel, max_rel=max_rel,
+                peak_rel=peak_rel, notes=notes)
 
 
 def _row(label: str, cfg: SimConfig, base: SimResult, void: SimResult, sig: dict) -> dict:

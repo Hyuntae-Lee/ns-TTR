@@ -117,15 +117,21 @@ class Laser:
     tau_p: float                 # pulse width (square: duration, gaussian: FWHM), s
     profile: str = "square"      # "square" | "gaussian"
     energy: float = 1e-9         # incident pulse energy, J
-    w: float = 10e-6             # 1/e^2 spot radius, m
+    w: float = 10e-6             # beam radius, m: 1/e^2 radius (gaussian) or edge of the uniform disc (flat)
+    beam: str = "gaussian"       # spatial profile: "gaussian" | "flat" (flat-top: uniform inside r <= w, zero outside)
     reflectivity: float = 0.6
     probe_w: float = 5e-6        # probe 1/e^2 radius for the thermoreflectance signal (<=0: centre cell), m
     c_tr: float = -1.5e-4        # thermoreflectance coefficient (dR/dT)/R at the 632.8 nm probe, 1/K (see materials.COPPER_C_TR_PROBE)
 
     @property
+    def beam_area(self) -> float:
+        """Integral of the spatial profile g(r) (peak 1) over the whole plane, m^2."""
+        return math.pi * self.w ** 2 if self.beam == "flat" else 0.5 * math.pi * self.w ** 2
+
+    @property
     def I0(self) -> float:
         """Peak incident intensity (W/m^2); defined so that the incident fluence integrates to `energy`."""
-        return 2.0 * self.energy / (math.pi * self.w ** 2 * self.tau_p)
+        return self.energy / (self.beam_area * self.tau_p)
 
     @property
     def t_center(self) -> float:
@@ -698,6 +704,17 @@ def gaussian_annulus_weights(r_faces: np.ndarray, w: float, r_cut: float) -> np.
     return 0.5 * math.pi * w ** 2 * (np.exp(-2.0 * ra ** 2 / w ** 2) - np.exp(-2.0 * rb ** 2 / w ** 2))
 
 
+def beam_annulus_weights(r_faces: np.ndarray, laser: "Laser", r_cut: float) -> np.ndarray:
+    """Integral of the pump's spatial profile g(r) 2 pi r dr over each annular face, clipped at r_cut (m^2):
+    Gaussian exp(-2 r^2/w^2), or the flat-top disc (1 for r <= w, the exact covered area of each annulus)."""
+    if laser.beam == "flat":
+        edge = min(r_cut, laser.w)
+        ra = np.minimum(r_faces[:-1], edge)
+        rb = np.minimum(r_faces[1:], edge)
+        return math.pi * (rb ** 2 - ra ** 2)
+    return gaussian_annulus_weights(r_faces, laser.w, r_cut)
+
+
 def probe_weights(cfg: SimConfig, grid: Grid) -> np.ndarray:
     """Normalised radial weights for the probe-averaged surface temperature."""
     if cfg.laser.probe_w <= 0:
@@ -789,7 +806,7 @@ def run_simulation(
     # surface source (W per cell at f = 1): copper cells of the j = 0 row
     la = cfg.laser
     q_abs = la.I0 * (1.0 - la.reflectivity)
-    Wsrc = gaussian_annulus_weights(grid.r_faces, la.w, cfg.geometry.R_cu)
+    Wsrc = beam_annulus_weights(grid.r_faces, la, cfg.geometry.R_cu)
     Wsrc[mat[0, :] != MAT_COPPER] = 0.0          # transparent silica surface receives nothing
     src = np.zeros(N)
     src[:nr] = q_abs * Wsrc
@@ -854,7 +871,7 @@ def run_simulation(
     diag = cfg.diagnostics()
     diag.update(
         n_cells=N, nr=nr, nz=nz, absorbed_energy=float(E_in[-1]), n_factorisations=n_factor,
-        absorbed_fraction_in_rod=float(Wsrc.sum() / (0.5 * math.pi * la.w ** 2)),
+        absorbed_fraction_in_rod=float(Wsrc.sum() / la.beam_area),
     )
     return SimResult(
         config=cfg, grid=grid, material=mat, times=times, T_surface=T_surface, T_probe=T_probe,

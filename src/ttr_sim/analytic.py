@@ -43,6 +43,17 @@ def center_step_response(tau, q0: float, w: float, mat: Material) -> np.ndarray:
     return q0 * w / (mat.k * math.sqrt(2.0 * math.pi)) * np.arctan(np.sqrt(8.0 * mat.alpha * tau) / w)
 
 
+def center_step_response_flat(tau, q0: float, a: float, mat: Material) -> np.ndarray:
+    """On-axis surface step response of a semi-infinite solid heated by a uniform disc of radius a
+    (Carslaw & Jaeger §10.5):  dT = 2 q0 sqrt(alpha t) / k * [1/sqrt(pi) - ierfc(a / (2 sqrt(alpha t)))]."""
+    from scipy.special import erfc
+    tau = np.clip(np.asarray(tau, dtype=float), 0.0, None)
+    s = np.sqrt(mat.alpha * tau)
+    x = np.divide(a, 2.0 * s, out=np.full_like(s, np.inf), where=s > 0)
+    ierfc = np.exp(-x ** 2) / math.sqrt(math.pi) - x * erfc(x)
+    return 2.0 * q0 * s / mat.k * (1.0 / math.sqrt(math.pi) - ierfc)
+
+
 def analytic_surface_signal(r, t, laser: Laser, mat: Material, n_fine: int = 8192, n_quad: int = 48) -> np.ndarray:
     """dT(r, 0, t) for the configured pulse shape, shape (len(t), len(r)).  `t` may be non-uniform.
 

@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ttr_sim import BottomStack, DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec, build_grid, run_simulation  # noqa: E402
-from ttr_sim.analytic import center_step_response, surface_step_response  # noqa: E402
+from ttr_sim.analytic import center_step_response, center_step_response_flat, surface_step_response  # noqa: E402
 from ttr_sim.materials import COPPER, FUSED_SILICA  # noqa: E402
 from ttr_sim.solver import MAT_SILICA, MAT_VOID, baseline_config, material_map, void_signal  # noqa: E402
 from ttr_sim.validation import analytic_comparison, grid_convergence, kvoid_sensitivity, run_pair  # noqa: E402
@@ -338,3 +338,40 @@ def test_bottom_stack_energy_balance_and_cooling():
     assert sink.E_lost[-1] > 0.05 * sink.E_in[-1] and adia.E_lost[-1] == 0.0   # the sink removes heat
     assert np.all(np.diff(sink.E_lost) >= -1e-30)
     assert sink.dT_probe[-1] < adia.dT_probe[-1]                                  # and cools the surface at late times
+
+
+# ----------------------------------------------------------------------------- flat-top pump beam
+def test_flat_top_beam_energy_and_uniform_heating():
+    """Flat-top beam covering the whole rod: all of E (1-R) lands on the copper, the surface heats uniformly,
+    and during the pulse the surface follows the 1-D uniform-flux solution 2 q sqrt(alpha t / pi) / k
+    (the silica shell is a poor conductor, so the rod behaves almost one-dimensionally)."""
+    cfg = baseline_config(make_cfg(2))
+    R = cfg.geometry.R_cu
+    cfg = replace(cfg, laser=replace(cfg.laser, beam="flat", w=R))
+    res = run_simulation(cfg)
+    la = cfg.laser
+    assert abs(res.energy_error) < 1e-9
+    assert res.E_in[-1] == pytest.approx(la.energy * (1 - la.reflectivity), rel=1e-9, abs=0)
+    i_end = int(np.searchsorted(res.times, la.tau_p)) - 1               # last step inside the pulse
+    Ts = res.T_surface[i_end] - cfg.numerics.T0
+    in_rod = res.grid.r_c < 0.8 * R                                     # away from the copper/silica edge
+    assert Ts[in_rod].max() / Ts[in_rod].min() < 1.02                   # flat across the rod
+    q = la.I0 * (1 - la.reflectivity)
+    one_d = 2.0 * q * math.sqrt(COPPER.alpha * res.times[i_end] / math.pi) / COPPER.k
+    assert Ts[0] == pytest.approx(one_d, rel=0.03)
+
+
+def test_flat_top_beam_partial_spot_and_analytic_flag():
+    """A flat-top spot smaller than the rod deposits its whole energy inside r <= w; no analytic comparison."""
+    cfg = baseline_config(make_cfg(2))
+    cfg = replace(cfg, laser=replace(cfg.laser, beam="flat", w=12.3e-6))
+    res = run_simulation(cfg)
+    la = cfg.laser
+    assert res.E_in[-1] == pytest.approx(la.energy * (1 - la.reflectivity), rel=1e-9, abs=0)
+    assert la.I0 == pytest.approx(la.energy / (math.pi * la.w ** 2 * la.tau_p))
+    i_end = int(np.searchsorted(res.times, la.tau_p)) - 1
+    Ts = res.T_surface[i_end] - cfg.numerics.T0
+    assert Ts[0] > 5 * Ts[np.searchsorted(res.grid.r_c, 30e-6)]         # hot inside the spot, cool well outside
+    centre = center_step_response_flat(res.times[i_end], la.I0 * (1 - la.reflectivity), la.w, COPPER)
+    assert Ts[0] == pytest.approx(float(centre), rel=0.05)              # semi-infinite disc-source centre value
+    assert analytic_comparison(res)["available"] is False

@@ -34,6 +34,7 @@ import scipy.sparse.linalg as spla
 from .solver import (
     MAT_COPPER, MAT_OXIDE, MAT_PAD, MAT_SILICA, MAT_VOID, SimConfig, SimResult, _transition_faces, build_grid,
     interface_resistance,
+    beam_annulus_weights,
     gaussian_annulus_weights,
 )
 
@@ -214,10 +215,10 @@ def run_simulation_3d(
     times = cfg.time_grid()
     dts = np.diff(times)
 
-    # laser source on the top faces of copper cells: axisymmetric Gaussian, per-sector fraction dtheta/(2 pi)
+    # laser source on the top faces of copper cells: axisymmetric beam, per-sector fraction dtheta/(2 pi)
     la = cfg.laser
     q_abs = la.I0 * (1.0 - la.reflectivity)
-    W_ann = gaussian_annulus_weights(grid.r_faces, la.w, cfg.geometry.R_cu)                       # (nr,)
+    W_ann = beam_annulus_weights(grid.r_faces, la, cfg.geometry.R_cu)                             # (nr,)
     src3 = np.zeros((nz, nr, nth))
     src3[0] = q_abs * W_ann[:, None] * dth[None, :] / (2.0 * math.pi)
     src3[0][mat[0] != MAT_COPPER] = 0.0
@@ -289,7 +290,7 @@ def run_simulation_3d(
     diag.update(
         n_cells=N, nr=nr, nz=nz, n_theta=nth, dtheta_min=float(dth.min()), dtheta_max=float(dth.max()),
         absorbed_energy=float(E_in[-1]), n_factorisations=n_factor,
-        absorbed_fraction_in_rod=float(W_ann.sum() / (0.5 * math.pi * la.w ** 2)),
+        absorbed_fraction_in_rod=float(W_ann.sum() / la.beam_area),
         solver="직접 LU (SuperLU)" if direct else "ILU + BiCGSTAB",
         mean_iterations=float(np.mean(iters)) if iters else 0.0,
     )

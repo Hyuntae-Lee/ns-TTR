@@ -1,0 +1,512 @@
+{
+ "criteria_default": {
+  "sigma": 1e-06,
+  "c_min": 0.02,
+  "dT_allowed": 10.0
+ },
+ "criteria_variants": {
+  "기본 (σ=1e-6, C=2 %, 10 K)": {
+   "sigma": 1e-06,
+   "c_min": 0.02,
+   "dT_allowed": 10.0
+  },
+  "σ = 1e-5": {
+   "sigma": 1e-05,
+   "c_min": 0.02,
+   "dT_allowed": 10.0
+  },
+  "σ = 1e-7": {
+   "sigma": 1e-07,
+   "c_min": 0.02,
+   "dT_allowed": 10.0
+  },
+  "C_min = 1 %": {
+   "sigma": 1e-06,
+   "c_min": 0.01,
+   "dT_allowed": 10.0
+  },
+  "C_min = 5 %": {
+   "sigma": 1e-06,
+   "c_min": 0.05,
+   "dT_allowed": 10.0
+  },
+  "ΔT 허용 = 1 K": {
+   "sigma": 1e-06,
+   "c_min": 0.02,
+   "dT_allowed": 1.0
+  },
+  "ΔT 허용 = 50 K": {
+   "sigma": 1e-06,
+   "c_min": 0.02,
+   "dT_allowed": 50.0
+  }
+ },
+ "n_sigma": 3.0,
+ "depths": [
+  2,
+  5,
+  10,
+  20,
+  40,
+  100,
+  200,
+  400
+ ],
+ "half_widths_main": [
+  2,
+  5,
+  10,
+  20,
+  30,
+  40,
+  80
+ ],
+ "half_widths_extra": [
+  3,
+  7,
+  14,
+  25,
+  35
+ ],
+ "thickness": 10.0,
+ "thick_sweep": {
+  "depths": [
+   20,
+   100,
+   400
+  ],
+  "half_widths": [
+   20,
+   40
+  ],
+  "thicknesses": [
+   1,
+   10,
+   40
+  ]
+ },
+ "pulse_sweep": {
+  "depths": [
+   20,
+   100,
+   400
+  ],
+  "half_widths": [
+   20,
+   40
+  ],
+  "factors": [
+   0.25,
+   0.5,
+   1.0,
+   2.0,
+   4.0
+  ]
+ },
+ "boundary": {
+  "기본 (σ=1e-6, C=2 %, 10 K)": {
+   "2": {
+    "min_half_width_um": 2.0,
+    "bound": "<=",
+    "limiting": "",
+    "grid_min": 2.0
+   },
+   "5": {
+    "min_half_width_um": 2.3644484856255255,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 3.0
+   },
+   "10": {
+    "min_half_width_um": 4.2637315385458185,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 5.0
+   },
+   "20": {
+    "min_half_width_um": 7.9902546183343235,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 10.0
+   },
+   "40": {
+    "min_half_width_um": 13.13261998581462,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 14.0
+   },
+   "100": {
+    "min_half_width_um": 19.133004575601532,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 20.0
+   },
+   "200": {
+    "min_half_width_um": 24.91520277445719,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 25.0
+   },
+   "400": {
+    "min_half_width_um": 29.08231949770805,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 30.0
+   }
+  },
+  "σ = 1e-5": {
+   "2": {
+    "min_half_width_um": 2.0219202339032205,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 3.0
+   },
+   "5": {
+    "min_half_width_um": 3.3625849607388667,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 5.0
+   },
+   "10": {
+    "min_half_width_um": 6.636044312504928,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 7.0
+   },
+   "20": {
+    "min_half_width_um": 15.225694554139935,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 20.0
+   },
+   "40": {
+    "min_half_width_um": 23.95525724557498,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 25.0
+   },
+   "100": {
+    "min_half_width_um": 28.21314668198216,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 30.0
+   },
+   "200": {
+    "min_half_width_um": 32.51969634274654,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 35.0
+   },
+   "400": {
+    "min_half_width_um": 35.521326500794544,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 40.0
+   }
+  },
+  "σ = 1e-7": {
+   "2": {
+    "min_half_width_um": 2.0,
+    "bound": "<=",
+    "limiting": "",
+    "grid_min": 2.0
+   },
+   "5": {
+    "min_half_width_um": 2.3644484856255255,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 3.0
+   },
+   "10": {
+    "min_half_width_um": 4.2637315385458185,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 5.0
+   },
+   "20": {
+    "min_half_width_um": 7.9902546183343235,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 10.0
+   },
+   "40": {
+    "min_half_width_um": 13.13261998581462,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 14.0
+   },
+   "100": {
+    "min_half_width_um": 19.133004575601532,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 20.0
+   },
+   "200": {
+    "min_half_width_um": 24.91520277445719,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 25.0
+   },
+   "400": {
+    "min_half_width_um": 29.08231949770805,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 30.0
+   }
+  },
+  "C_min = 1 %": {
+   "2": {
+    "min_half_width_um": 2.0,
+    "bound": "<=",
+    "limiting": "",
+    "grid_min": 2.0
+   },
+   "5": {
+    "min_half_width_um": 2.0,
+    "bound": "<=",
+    "limiting": "",
+    "grid_min": 2.0
+   },
+   "10": {
+    "min_half_width_um": 3.1254254919617344,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 5.0
+   },
+   "20": {
+    "min_half_width_um": 5.928547878149265,
+    "bound": "=",
+    "limiting": "잡음+비율",
+    "grid_min": 7.0
+   },
+   "40": {
+    "min_half_width_um": 9.961104590584497,
+    "bound": "=",
+    "limiting": "잡음+비율",
+    "grid_min": 10.0
+   },
+   "100": {
+    "min_half_width_um": 14.803842309022805,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 20.0
+   },
+   "200": {
+    "min_half_width_um": 19.66443762628836,
+    "bound": "=",
+    "limiting": "잡음+비율",
+    "grid_min": 20.0
+   },
+   "400": {
+    "min_half_width_um": 23.579406012547157,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 25.0
+   }
+  },
+  "C_min = 5 %": {
+   "2": {
+    "min_half_width_um": 2.173598756087889,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 3.0
+   },
+   "5": {
+    "min_half_width_um": 3.647557096741639,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 5.0
+   },
+   "10": {
+    "min_half_width_um": 6.519147811377003,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 7.0
+   },
+   "20": {
+    "min_half_width_um": 11.780302892158018,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 14.0
+   },
+   "40": {
+    "min_half_width_um": 18.596222355394055,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 20.0
+   },
+   "100": {
+    "min_half_width_um": 26.233372136123666,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 30.0
+   },
+   "200": {
+    "min_half_width_um": 32.28671494667871,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 35.0
+   },
+   "400": {
+    "min_half_width_um": 35.226349155598015,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 40.0
+   }
+  },
+  "ΔT 허용 = 1 K": {
+   "2": {
+    "min_half_width_um": 2.0219202339032205,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 3.0
+   },
+   "5": {
+    "min_half_width_um": 3.3625849607388663,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 5.0
+   },
+   "10": {
+    "min_half_width_um": 6.636044312504926,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 7.0
+   },
+   "20": {
+    "min_half_width_um": 15.225694554139935,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 20.0
+   },
+   "40": {
+    "min_half_width_um": 23.95525724557498,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 25.0
+   },
+   "100": {
+    "min_half_width_um": 28.21314668198216,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 30.0
+   },
+   "200": {
+    "min_half_width_um": 32.51969634274654,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 35.0
+   },
+   "400": {
+    "min_half_width_um": 35.521326500794544,
+    "bound": "=",
+    "limiting": "잡음",
+    "grid_min": 40.0
+   }
+  },
+  "ΔT 허용 = 50 K": {
+   "2": {
+    "min_half_width_um": 2.0,
+    "bound": "<=",
+    "limiting": "",
+    "grid_min": 2.0
+   },
+   "5": {
+    "min_half_width_um": 2.3644484856255255,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 3.0
+   },
+   "10": {
+    "min_half_width_um": 4.2637315385458185,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 5.0
+   },
+   "20": {
+    "min_half_width_um": 7.9902546183343235,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 10.0
+   },
+   "40": {
+    "min_half_width_um": 13.13261998581462,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 14.0
+   },
+   "100": {
+    "min_half_width_um": 19.133004575601532,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 20.0
+   },
+   "200": {
+    "min_half_width_um": 24.91520277445719,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 25.0
+   },
+   "400": {
+    "min_half_width_um": 29.08231949770805,
+    "bound": "=",
+    "limiting": "비율",
+    "grid_min": 30.0
+   }
+  }
+ },
+ "rod_radius_um": 40.0,
+ "pump_w_um": 10.0,
+ "probe_w_um": 5.0,
+ "reflectivity": 0.6,
+ "c_tr": -0.00015,
+ "n_cases": 144,
+ "wall_s": 78.7484450340271,
+ "presets": [
+  {
+   "range": "0~2",
+   "tau_p_s": 1.724137931034483e-08,
+   "energy_J": 2e-09
+  },
+  {
+   "range": "2~5",
+   "tau_p_s": 6.896551724137931e-08,
+   "energy_J": 5e-09
+  },
+  {
+   "range": "5~10",
+   "tau_p_s": 4.310344827586208e-07,
+   "energy_J": 1e-08
+  },
+  {
+   "range": "10~20",
+   "tau_p_s": 1.7241379310344831e-06,
+   "energy_J": 2e-08
+  },
+  {
+   "range": "20~40",
+   "tau_p_s": 6.8965517241379325e-06,
+   "energy_J": 5.0000000000000004e-08
+  },
+  {
+   "range": "40~100",
+   "tau_p_s": 2.758620689655173e-05,
+   "energy_J": 9.000000000000001e-08
+  },
+  {
+   "range": "100~200",
+   "tau_p_s": 0.0001724137931034483,
+   "energy_J": 2.0000000000000002e-07
+  },
+  {
+   "range": "200~400",
+   "tau_p_s": 0.0006896551724137932,
+   "energy_J": 5.000000000000001e-07
+  },
+  {
+   "range": "400~500",
+   "tau_p_s": 0.0027586206896551726,
+   "energy_J": 9.000000000000001e-07
+  }
+ ]
+}

@@ -3,8 +3,9 @@
 
      Fixed frame (no zoom / pan) laid out at a 1:1 aspect: the whole rod depth, the copper (|r| <= R) in the
      middle of the grey silica.  It shows
-       * the void being set up ("pending" geometry) as a shape that can be moved and resized with the mouse;
-         a drag posts {seq, rc, rh, depth, thick} [μm] back to Streamlit, which stores it as the new geometry;
+       * the void being set up ("pending" geometry) as a shape that can be moved and resized with the mouse,
+         and its four numbers as editable fields in the card above the map; a drag or a typed value posts
+         {seq, rc, rh, depth, thick} [μm] back to Streamlit, which stores it as the new geometry;
        * once a result exists (args.result): its temperature snapshots as a heatmap over the copper, with a
          time slider (and ← / → while the map has the focus), and the void that was actually computed as a
          dashed outline — visible as soon as the pending void differs from it, i.e. the result is outdated.
@@ -31,25 +32,23 @@
   #tlabel { white-space: nowrap; min-width: 15em; font-variant-numeric: tabular-nums; }
   #tlabel b { font-weight: 600; }
   #tslider { flex: 1; accent-color: #d62728; }
-  /* cards under the map: wrap freely, the frame height follows them (see showInfo) */
-  #info { padding: 4px 10px 10px 60px; display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
-  /* one card per topic (k_void | Void 형상): heading on top, values below */
+  /* Void 형상 card above the map, left-aligned with the plot area (= layout margin.l); the frame height
+     follows it (see fitFrame) */
+  #info { padding: 16px 10px 10px 60px; display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
   #info .sec { border: 1px solid #e3e6ec; border-radius: 8px; background: #f7f8fa; padding: 6px 12px 8px 12px; }
-  #info .sec-h { font-weight: 700; font-size: 12px; color: #d62728; letter-spacing: 0.02em; margin-bottom: 2px; }
-  #info .sec-b { display: flex; flex-wrap: wrap; gap: 2px 18px; }
-  #info .item { white-space: nowrap; display: flex; align-items: baseline; }
-  #info .item .k { color: #6b7280; margin-right: 6px; }
-  #info .item .v { font-weight: 600; }
-  /* Void 형상: two pairs per row on a shared grid (label | number | unit, twice), so the second row lines up
-     under the first — 두께 under 깊이, 반경 반폭 under 축에서 벗어난 거리.  The number column has a fixed width
-     and is right-aligned, so labels and units never shift as the values change. */
-  #info .sec-b.grid { display: grid; grid-template-columns: auto 4.6em auto auto 4.6em auto; column-gap: 0; row-gap: 2px;
-                      align-items: baseline; justify-content: start; }
-  #info .sec-b.grid .item { display: contents; }
-  #info .sec-b.grid .k { margin-right: 6px; white-space: nowrap; }
-  #info .sec-b.grid .item:nth-child(even) .k { margin-left: 26px; }      /* gap between the two pairs */
-  #info .item .v.num { text-align: right; font-variant-numeric: tabular-nums; }
-  #info .item .u { color: #6b7280; margin-left: 4px; }
+  #info .sec-h { font-weight: 700; font-size: 12px; color: #d62728; letter-spacing: 0.02em; margin-bottom: 4px; }
+  /* two pairs per row on a shared grid (label | input | unit, twice), so the second row lines up under the
+     first — 두께 under 깊이, 반경 반폭 under 축에서 벗어난 거리 — and nothing shifts as the values change */
+  #info .grid { display: grid; grid-template-columns: auto auto auto auto auto auto; row-gap: 4px;
+                align-items: center; justify-content: start; }
+  #info .k { color: #6b7280; margin-right: 6px; white-space: nowrap; }
+  #info .k.second { margin-left: 26px; }                               /* gap between the two pairs */
+  #info .u { color: #6b7280; margin-left: 4px; }
+  #info input { width: 5.6em; box-sizing: border-box; padding: 2px 6px; border: 1px solid #d5d9e0; border-radius: 6px;
+                background: #ffffff; color: #31333f; font: inherit; font-weight: 600; text-align: right;
+                font-variant-numeric: tabular-nums; }
+  #info input:focus { outline: none; border-color: #d62728; box-shadow: 0 0 0 1px #d62728; }
+  #info input::-webkit-outer-spin-button, #info input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   /* cursor for the zone under the mouse (overrides Plotly's own cursor classes on the drag layer) */
   .cur-move, .cur-move * { cursor: move !important; }
   .cur-ew, .cur-ew * { cursor: ew-resize !important; }
@@ -59,9 +58,9 @@
 </style>
 </head>
 <body>
+<div id="info"></div>
 <div id="plot" tabindex="0"></div>
 <div id="timebar" hidden><span id="tlabel"></span><input id="tslider" type="range" min="0" max="0" step="1" value="0"></div>
-<div id="info"></div>
 <script>
 (function () {
   const MIN_HIT = 30;                    // px: minimum width / height of the grab area around the void
@@ -94,18 +93,6 @@
   const same = (p, q) => p && q && KEYS.every(k => Math.abs(p[k] - q[k]) < 1e-9);
   const sameDistance = (p, q) => p && q && KEYS.every(k => Math.abs(Math.abs(p[k]) - Math.abs(q[k])) < 1e-9);
 
-  // Sections shown under the map: [heading, [[label, value(, unit)], ...]].
-  // With a unit, the value is a number drawn right-aligned in a fixed-width column (3 decimals).
-  function sectionsOf(a, g) {
-    const n = x => x.toFixed(3);
-    return [
-      ["k_void", [["void 열전도율", a.kvoid_text]]],
-      // row-major on a 2-pair grid: 두께 sits under 깊이, 반경 반폭 under 축에서 벗어난 거리
-      ["Void 형상", [["깊이 (윗면 z)", n(g.depth), "μm"], ["축에서 벗어난 거리", n(Math.abs(g.rc)), "μm"],
-                     ["두께", n(g.thick), "μm"], ["반경 반폭", n(g.rh), "μm"]]],
-    ];
-  }
-
   function ellipse(g, style) {
     return Object.assign({ type: "circle", xref: "x", yref: "y",
                            x0: g.rc - g.rh, x1: g.rc + g.rh, y0: g.depth, y1: g.depth + g.thick }, style);
@@ -119,28 +106,57 @@
     return u;
   }
 
-  // Cards under the map + iframe height = map + time bar + however much height the cards need at this width.
-  function showInfo(g) {
-    const el = (cls, text) => { const e = document.createElement("div"); e.className = cls; if (text !== undefined) e.textContent = text; return e; };
-    info.replaceChildren(...sectionsOf(args, g).map(function (sec) {
-      const box = el("sec"), body = el("sec-b");
-      box.appendChild(el("sec-h", sec[0]));
-      sec[1].forEach(function (kv) {
-        const item = el("item"), k = document.createElement("span"), v = document.createElement("span");
-        k.className = "k"; k.textContent = kv[0]; v.className = "v"; v.textContent = kv[1];
-        item.append(k, v);
-        if (kv.length > 2) {
-          const u = document.createElement("span");
-          u.className = "u"; u.textContent = kv[2]; v.className = "v num";
-          item.appendChild(u);
-          body.classList.add("grid");
-        }
-        body.appendChild(item);
-      });
-      box.appendChild(body);
-      return box;
-    }));
+  // ---- Void 형상 card: the four values as editable fields ------------------------------------------------
+  // Row-major on the 2-pair grid: [geometry key, label].  "rc" is shown (and typed) as the distance |rc|.
+  const FIELDS = [["depth", "깊이 (윗면 z)"], ["rc", "축에서 벗어난 거리"], ["thick", "두께"], ["rh", "반경 반폭"]];
+  const inputs = {};
+  (function buildCard() {
+    const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+    const box = el("div", "sec"), grid = el("div", "grid");
+    box.appendChild(el("div", "sec-h", "Void 형상"));
+    FIELDS.forEach(function (f, i) {
+      const inp = el("input");
+      inp.type = "number"; inp.step = "any"; inp.setAttribute("aria-label", f[1] + " [μm]");
+      inp.addEventListener("change", commitFields);            // Enter or leaving the field
+      inp.addEventListener("keydown", function (e) { if (e.key === "Enter") inp.blur(); });
+      inp.addEventListener("blur", function () { if (geom) showInfo(geom); });   // "5" -> "5.000" even if unchanged
+      inputs[f[0]] = inp;
+      grid.append(el("span", "k" + (i % 2 ? " second" : ""), f[1]), inp, el("span", "u", "μm"));
+    });
+    box.appendChild(grid);
+    info.appendChild(box);
+  })();
+
+  function fitFrame() {
     send("streamlit:setFrameHeight", { height: args.height + timebar.offsetHeight + info.offsetHeight });
+  }
+
+  // Show a geometry in the fields (3 decimals).  A field being typed in is left alone.
+  function showInfo(g) {
+    FIELDS.forEach(function (f) {
+      const inp = inputs[f[0]];
+      if (document.activeElement !== inp) inp.value = (f[0] === "rc" ? Math.abs(g.rc) : g[f[0]]).toFixed(3);
+    });
+    fitFrame();
+  }
+
+  // The pending void changed (drag or typed): redraw it, show the clamped values, tell Streamlit.
+  function setGeometry(g) {
+    geom = g;
+    if (g.rc !== 0) side = Math.sign(g.rc);
+    Plotly.relayout(gd, shapeUpdate(g));
+    showInfo(g);
+    sentSeq = Date.now();                                    // unique per change, also across iframe reloads
+    send("streamlit:setComponentValue", { value: Object.assign({ seq: sentSeq }, g, { rc: Math.abs(g.rc) }), dataType: "json" });
+  }
+
+  function commitFields() {
+    if (!args || !geom) return;
+    const val = k => { const x = parseFloat(inputs[k].value); return isFinite(x) ? x : (k === "rc" ? Math.abs(geom.rc) : geom[k]); };
+    const g = clamp({ rc: side * Math.abs(val("rc")), rh: val("rh"), depth: val("depth"), thick: val("thick") }, args);
+    if (document.activeElement && document.activeElement.tagName === "INPUT") document.activeElement.blur();
+    if (same(g, geom)) { showInfo(geom); return; }             // nothing changed (or clamped back): just tidy the text
+    setGeometry(g);
   }
 
   // ---- temperature snapshots -----------------------------------------------------------------------------
@@ -293,19 +309,14 @@
     drag = null;
     setCursor(cursorClass(zoneAt(e.clientX, e.clientY)));
     if (same(g, geom)) { Plotly.relayout(gd, shapeUpdate(geom)); showInfo(geom); return; }
-    geom = g;
-    if (g.rc !== 0) side = Math.sign(g.rc);
-    Plotly.relayout(gd, shapeUpdate(g));                       // snap to the clamped / rounded values
-    showInfo(g);
-    sentSeq = Date.now();                                    // unique per drag, also across iframe reloads
-    send("streamlit:setComponentValue", { value: Object.assign({ seq: sentSeq }, g, { rc: Math.abs(g.rc) }), dataType: "json" });
+    setGeometry(g);                                            // snaps the shape to the clamped / rounded values
   });
 
   // ---- snapshot selection --------------------------------------------------------------------------------
   tslider.addEventListener("input", function () { setFrame(parseInt(tslider.value, 10)); });
   document.addEventListener("keydown", function (e) {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    if (e.target === tslider || !frames) return;             // the slider steps by itself
+    if (e.target === tslider || e.target.tagName === "INPUT" || !frames) return;   // slider steps by itself; fields move the caret
     e.preventDefault();
     setFrame(cur + (e.key === "ArrowRight" ? 1 : -1));
   });
