@@ -19,7 +19,7 @@ from plotly.offline import get_plotlyjs
 import streamlit as st
 import streamlit.components.v1 as components
 
-from ttr_sim import BottomStack, DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec
+from ttr_sim import BottomStack, DEPTH_PRESETS, KVOID_PRESETS, Geometry, Laser, Numerics, SimConfig, VoidSpec, random_voids
 from ttr_sim.analytic import center_step_response, center_step_response_flat
 from ttr_sim.materials import (
     AIR, COPPER, COPPER_ABSORPTION_DEPTH, COPPER_C_TR_PROBE, COPPER_REFLECTIVITY_DEFAULT, FUSED_SILICA,
@@ -27,7 +27,7 @@ from ttr_sim.materials import (
 )
 from ttr_sim.presets import D_TH_PRESET, fmt_length, fmt_time
 from ttr_sim.solver import MAT_VOID, build_grid, material_map
-from ttr_sim.solver3d import theta_faces
+from ttr_sim.solver3d import fit_resolution, full_circle, max_unknowns, needs_3d, theta_faces
 from ttr_sim.validation import analytic_comparison, grid_convergence, run_pair
 
 st.set_page_config(page_title="Nanosecond Transient Thermoreflectance Simulator", page_icon="🔬", layout="wide",
@@ -117,15 +117,40 @@ def init_state():
 BEAM_GAUSSIAN, BEAM_FLAT = "Gaussian", "Flat-top (균일)"
 
 
+# void arrangement (radio labels in the 'Void 배치' card)
+MODE_SINGLE, MODE_RANDOM = "단일 void", "랜덤 다중 void"
+# Defaults of the random-arrangement inputs.  They are passed as the widgets' `value` (not pre-seeded into
+# session_state: a keyed number_input created later than the seed shows its minimum instead of the seed in
+# Streamlit 1.50) and read back with `rand()`, which falls back to them while the widgets do not exist.
+RANDOM_DEFAULTS = dict(rand_r_um=5.0, rand_thickness_um=5.0, rand_n=10, rand_seed=1)
+
+
+def rand(key: str):
+    return st.session_state.get(key, RANDOM_DEFAULTS[key])
+
+
+def random_mode() -> bool:
+    return st.session_state.get("void_mode", MODE_SINGLE) == MODE_RANDOM
+
+
+def current_voids(k_void: float) -> list:
+    """The void(s) described by the panel: one draggable void, or `rand_n` identical voids spread at
+    random (seeded) over the whole rod."""
+    s = st.session_state
+    if random_mode():
+        return random_voids(int(rand("rand_n")), rand("rand_r_um") * UM, rand("rand_thickness_um") * UM, Geometry(),
+                            seed=int(rand("rand_seed")), template=VoidSpec(k=k_void, rho_cp=AIR.rho_cp))
+    return [VoidSpec(enabled=True, depth=s.void_depth_um * UM, thickness=s.void_thickness_um * UM,
+                     r_center=s.void_rc_um * UM, r_half=s.void_r_um * UM, k=k_void, rho_cp=AIR.rho_cp,
+                     shape="ellipse")]                    # fixed: spheroidal void (bubble-like)
+
+
 def build_config() -> SimConfig:
     s = st.session_state
     p = DEPTH_PRESETS[s.preset_idx]
     k_void = KVOID_PRESETS[s.kvoid_idx].k
-    void = VoidSpec(
-        enabled=True, depth=s.void_depth_um * UM, thickness=s.void_thickness_um * UM,
-        r_center=s.void_rc_um * UM, r_half=s.void_r_um * UM, k=k_void, rho_cp=AIR.rho_cp,
-        shape="ellipse",                                  # fixed: spheroidal void (bubble-like)
-    )
+    voids = current_voids(k_void)
+    void, extra = voids[0], tuple(voids[1:])
     # Pulse width: the preset's value unless edited in the laser card.  The surface-layer spacing keeps the
     # preset rule dz = sqrt(D tau_p)/10 for the pulse width actually used, so dt = tau_p/N still holds.
     tau_p, dz = p.tau_p, p.dz
@@ -148,14 +173,35 @@ def build_config() -> SimConfig:
         oxide_thickness=float(s.get("ox_nm", 5.0)) * 1e-9, oxide_k=float(s.get("ox_k", 4.5)),
         pad_thickness=float(s.get("pad_um", 200.0)) * UM, pad_k=float(s.get("pad_k", 62.5)),
     )
-    return SimConfig(geometry=geometry, void=void, laser=laser, numerics=numerics, bottom=bottom)
+    cfg = SimConfig(geometry=geometry, void=void, extra_voids=extra, laser=laser, numerics=numerics, bottom=bottom)
+    # 3-D case: the void resolution (1/8 of each void dimension in r, z and theta) is lowered, down to 1/3, when
+    # the unknowns would exceed the cap; many small voids spread over the rod otherwise make meshes of 10^7-10^8
+    # unknowns.  The sidebar reports the resolution actually used and refuses 적용 when even 1/3 is too fine.
+    return fit_resolution(cfg)
 
 
-def void_info_html(v: VoidSpec) -> str:
+def random_info_text(cfg: SimConfig) -> str:
+    v = cfg.void
+    return (f"랜덤 배치 void {len(cfg.voids)}개 · 반경 반폭 {v.r_half * 1e6:.3g} μm · 두께 {v.thickness * 1e6:.3g} μm · "
+            f"가장 얕은 void 깊이 {cfg.void_depth_min * 1e6:.3g} μm")
+
+
+def void_info_html(cfg_or_void) -> str:
     """k_void / Void 형상 cards for a computed void: the same two cards, labels and number format as under
-    the MAP (void_editor.html draws those in the browser; keep the two in step)."""
+    the MAP (void_editor.html draws those in the browser; keep the two in step).  For a random arrangement
+    the geometry card lists the arrangement instead of one void's numbers."""
     def item(label: str, um: float) -> str:
         return f'<span class="k">{label}</span><span class="v num">{um:.3f}</span><span class="u">μm</span>'
+    if isinstance(cfg_or_void, SimConfig):
+        cfg = cfg_or_void
+        v = cfg.void
+        if cfg.extra_voids:
+            return ('<div class="void-info">'
+                    f'<div class="sec"><div class="sec-h">k_void</div><span class="k">void 열전도율</span>'
+                    f'<span class="v">{kvoid_text(v.k)}</span></div>'
+                    f'<div class="sec"><div class="sec-h">Void 배치</div><span class="v">{random_info_text(cfg)}</span></div></div>')
+    else:
+        v = cfg_or_void
     if not v.enabled:
         return '<div class="void-info"><div class="sec"><div class="sec-h">Void</div>void 없음 (baseline)</div></div>'
     return (
@@ -263,11 +309,21 @@ def render_map(res: dict | None):
         if cached is None or cached[0] != res["run_id"]:
             cached = s["_field_payload"] = (res["run_id"], field_payload(res))
         payload = cached[1]
+    static, info_text = None, None
+    if random_mode():
+        # the random voids are drawn where they are, projected onto the displayed (x, z) plane: x = r cos(theta)
+        voids = current_voids(KVOID_PRESETS[s.kvoid_idx].k)
+        static = [dict(x=v.r_center * math.cos(v.theta) * 1e6, depth=v.depth * 1e6, thick=v.thickness * 1e6,
+                       rh=v.r_half * 1e6, side=abs(math.sin(v.theta))) for v in voids]
+        info_text = (f"랜덤 배치 void {len(voids)}개 · 반경 반폭 {rand('rand_r_um'):g} μm · 두께 {rand('rand_thickness_um'):g} μm · "
+                     f"시드 {int(rand('rand_seed'))}  "
+                     f"— 위치는 x–z 평면에 투영한 것이며(흐린 윤곽 = 평면에서 먼 void), 온도장은 x 축을 지나는 단면입니다.")
     void_editor_component()(
         R=geo.R_cu * 1e6, L=geo.L * 1e6,
         rc=s.void_rc_um, rh=s.void_r_um, depth=s.void_depth_um, thick=s.void_thickness_um,
         rc_max=VOID_RC_MAX, r_max=VOID_R_MAX, min_size=VOID_MIN,
         applied_seq=s.get("void_editor_seq", 0),
+        static_voids=static, info_text=info_text,
         result=payload, colorscale=TEMP_COLORSCALE, height=900, key="void_editor", default=None,
     )
 
@@ -454,7 +510,7 @@ def card_header(num: int, title: str):
 # sidebar, so that the grid / time summary and the warnings shown there (and the component itself, drawn
 # further down) all use the dragged geometry on the same rerun.
 dragged = st.session_state.get("void_editor")
-if dragged and dragged.get("seq") != st.session_state.get("void_editor_seq", 0):
+if not random_mode() and dragged and dragged.get("seq") != st.session_state.get("void_editor_seq", 0):
     st.session_state.void_editor_seq = dragged["seq"]
     apply_void_from_editor(dragged)
 
@@ -477,11 +533,30 @@ with st.sidebar:
     # k_void is fixed to the real air value (kvoid_idx = 0, set with the other defaults) and is not shown
     # here; it is printed in the temperature-map title instead.
 
-    # ---- card 2: observation window.  Outside the form: it is the time-axis range of the signal charts, so a
+    # ---- card 2: void arrangement.  Outside the form so the MAP follows at once.  The single void is
+    # edited on the MAP; the random arrangement has only size, count and seed.
+    with st.container(border=True):
+        card_header(2, "Void 배치")
+        st.radio("void 배치", [MODE_SINGLE, MODE_RANDOM], horizontal=True, key="void_mode", label_visibility="collapsed",
+                 help="단일 void: MAP 에서 끌어서 위치와 크기를 정합니다. 랜덤 다중 void: 같은 크기의 void 를 지정한 개수만큼 "
+                      "구리 기둥 전체(반지름·방위각·깊이)에 고르게 무작위로 배치합니다. 겹치는 void 는 합쳐집니다. "
+                      "3차원 전체 원주 계산입니다: void 가 많거나 작으면 격자가 커져 수십 분~수 시간이 걸릴 수 있고, 미지수 한도에 맞춰 "
+                      "void 해상도가 자동으로 낮아집니다 (아래 '계산된 격자' 정보에 표시).")
+        if random_mode():
+            c1, c2 = st.columns(2)
+            c1.number_input("반경 반폭 [μm]", min_value=VOID_MIN, max_value=VOID_R_MAX, value=RANDOM_DEFAULTS["rand_r_um"], step=0.5,
+                            key="rand_r_um", format="%.3g")
+            c2.number_input("두께 [μm]", min_value=VOID_MIN, max_value=500.0, value=RANDOM_DEFAULTS["rand_thickness_um"], step=0.5,
+                            key="rand_thickness_um", format="%.3g")
+            c1.number_input("void 개수", min_value=1, max_value=200, value=RANDOM_DEFAULTS["rand_n"], step=1, key="rand_n")
+            c2.number_input("시드 (배치 번호)", min_value=0, max_value=100000, value=RANDOM_DEFAULTS["rand_seed"], step=1, key="rand_seed",
+                            help="같은 시드는 같은 배치를 만듭니다. 다른 배치를 보려면 바꾸세요.")
+
+    # ---- card 3: observation window.  Outside the form: it is the time-axis range of the signal charts, so a
     # change is applied at once (zoom into / beyond the computed span); the calculation itself only runs to
     # the new window at the next 적용.
     with st.container(border=True):
-        card_header(2, "관측 시간창")
+        card_header(3, "관측 시간창")
         st.number_input(
             "관측 시간창 [μs]", min_value=1e-3, max_value=1e6, step=1.0, key="t_end_us", format="%.4g",
             label_visibility="collapsed",
@@ -499,9 +574,9 @@ with st.sidebar:
         # inputs here: it comes from the depth preset and is edited by dragging the void on the initial page.
         # A distance from the axis > 0 switches the void case to the 3-D (r, θ, z) solver.
 
-        # ---- card 3: laser
+        # ---- card 4: laser
         with st.container(border=True):
-            card_header(3, "레이저")
+            card_header(4, "레이저")
             st.markdown(
                 f'<div class="card-body muted">펌프: {PUMP_WAVELENGTH_NM:g} nm 펄스, 사각 (폭 = τp) · '
                 f'프로브: {PROBE_WAVELENGTH_NM:g} nm CW</div>',
@@ -572,6 +647,16 @@ with st.sidebar:
             grid_err = None
         except ValueError as e:
             n_cells, grid_err = None, str(e)
+        n_th = n_unknowns = None
+        if grid_err is None and needs_3d(cfg_preview):
+            n_th = len(theta_faces(cfg_preview)) - 1
+            n_unknowns = n_cells * n_th
+            if n_unknowns > max_unknowns(cfg_preview):
+                grid_err = (
+                    f"3차원 미지수 ≈ {n_unknowns:,} ((r, z) 셀 {n_cells:,} × 방위각 {n_th}) 가 한도 {max_unknowns(cfg_preview):,} 를 넘습니다 "
+                    f"(void 해상도를 1/{cfg_preview.numerics.void_cells} 까지 낮춘 뒤에도). "
+                    "void 개수를 줄이거나, void 를 크게 하거나, 더 깊은 프리셋(긴 펄스 → 거친 격자)을 고르세요."
+                )
 
         la_p = cfg_preview.laser
         f_peak = 1.0 if la_p.profile == "square" else float(la_p.f(la_p.t_center))          # Gaussian peak ≈ 0.94
@@ -595,11 +680,14 @@ with st.sidebar:
         with st.expander("계산된 격자 · 시간 정보  (읽기 전용)"):
             v = cfg_preview.void
             blocks_all = v.shape == "box" and v.r_inner == 0 and v.r_outer >= cfg_preview.geometry.R_cu * (1 - 1e-9)
-            st.caption(
-                f"void 범위: z = {v.depth * 1e6:.3f} ~ {v.z_bottom * 1e6:.3f} μm, "
-                f"r = {v.r_inner * 1e6:.3f} ~ {min(v.r_outer, cfg_preview.geometry.R_cu) * 1e6:.3f} μm, "
-                f"k_void = {v.k:g} W/m·K" + ("  — 단면 전체를 가로막음 (우회로 없음)" if blocks_all else "")
-            )
+            if cfg_preview.extra_voids:
+                st.caption(random_info_text(cfg_preview) + f", k_void = {v.k:g} W/m·K")
+            else:
+                st.caption(
+                    f"void 범위: z = {v.depth * 1e6:.3f} ~ {v.z_bottom * 1e6:.3f} μm, "
+                    f"r = {v.r_inner * 1e6:.3f} ~ {min(v.r_outer, cfg_preview.geometry.R_cu) * 1e6:.3f} μm, "
+                    f"k_void = {v.k:g} W/m·K" + ("  — 단면 전체를 가로막음 (우회로 없음)" if blocks_all else "")
+                )
             st.markdown(
                 f"**τp** = {fmt_time(d['tau_p'])}  ·  **격자** 표면층 Δz = {fmt_length(d['dz'])}, Δr = {fmt_length(d['dr'])}; "
                 f"void 주변 Δz = {fmt_length(d['dz_void'])}, Δr = {fmt_length(d['dr_void'])} (void 치수의 1/{d['void_cells']})  \n"
@@ -610,13 +698,15 @@ with st.sidebar:
                 f"**피크 파워** 입사 {P_fmt(P_inc)} · 흡수 {P_fmt(P_abs)} (= 에너지 / τp{'' if f_peak == 1 else ' × 0.94'})  \n"
                 f"**예상 표면 피크 상승** ≈ {dT_lo:.3g} ~ {dT_hi:.3g} K (반무한 구리 해석해 ~ 로드 갇힘 상한)"
             )
-            if cfg_preview.void.r_center > 0 and n_cells:
-                n_th = len(theta_faces(cfg_preview)) - 1
-                n_unknowns = n_cells * n_th
+            if n_unknowns is not None:
+                domain = "전체 원주" if full_circle(cfg_preview) else "반원"
+                vc, vc_default = cfg_preview.numerics.void_cells, Numerics(dz=1.0).void_cells
+                reduced = f" — 미지수 한도에 맞춰 1/{vc_default} 에서 1/{vc} 로 낮춤" if vc < vc_default else ""
                 st.info(
-                    f"축에서 벗어난 void → void 케이스는 3차원 (r, θ, z) 계산: 방위각 셀 {n_th}개 (반원, void 각폭을 {cfg_preview.numerics.void_cells}등분), "
-                    f"미지수 ≈ {n_unknowns:,} ({'직접 LU' if n_unknowns <= 60_000 else 'ILU + 반복법'}). "
-                    f"baseline 은 축대칭 2D. 계산 시간은 2D 보다 수십~수백 배 걸릴 수 있습니다."
+                    f"축에서 벗어난 void → void 케이스는 3차원 (r, θ, z) 계산: 방위각 셀 {n_th}개 ({domain}, void 각폭을 {vc}등분{reduced}), "
+                    f"미지수 ≈ {n_unknowns:,} ({'직접 LU' if n_unknowns <= 60_000 else '구조 전처리 CG'}). "
+                    f"baseline 은 축대칭 2D. 계산 시간은 2D 보다 수십~수백 배 걸릴 수 있습니다"
+                    + (f" (미지수 100만 개당 스텝 하나에 약 10 s, {d['n_steps']:,} 스텝)." if n_unknowns > 60_000 else ".")
                 )
             st.markdown(
                 """
@@ -674,6 +764,15 @@ if apply:
         st.session_state.result = dict(cfg=cfg, base=base, void=void, sig=sig, ana=ana, run_id=time.time_ns())
         st.session_state.conv = None
         run_finished = True
+    except ValueError as e:                      # grid / unknown-count caps: a message, not a traceback
+        st.error(str(e))
+    except (MemoryError, RuntimeError) as e:
+        if isinstance(e, RuntimeError) and "MALLOC" not in str(e).upper():
+            st.exception(e)
+        else:                                    # SuperLU could not allocate: the server process is out of memory
+            st.error("메모리 부족으로 행렬 분해에 실패했습니다 (SuperLU). 이전 계산의 메모리가 남아 있을 수 있으니 앱(서버)을 "
+                     "재시작한 뒤 다시 시도하고, 그래도 실패하면 void 개수를 줄이거나 void 를 키워 미지수를 줄이세요. "
+                     f"({e})")
     except Exception as e:  # noqa: BLE001
         st.exception(e)
     finally:
@@ -741,7 +840,7 @@ diag = void.diagnostics
 # contrast at the signal peak (next to the absolute difference it belongs to) and the time at which the value
 # occurs.  The explanations are tooltips on the row / column headings.
 c_tr = cfg.laser.c_tr
-t_ref = 2 * cfg.void.depth ** 2 / cfg.copper.alpha
+t_ref = 2 * cfg.void_depth_min ** 2 / cfg.copper.alpha
 t_base_peak = float(base.times[int(np.argmax(base.dT_probe))])
 rr = lambda dT: f"{c_tr * dT * 1e4:+.3g} ×10⁻⁴"                      # noqa: E731
 tt = lambda t_: f"{t_ * tscale:.3g} {tunit}"                          # noqa: E731
@@ -837,7 +936,7 @@ if view == VIEW_SIGNAL:
         st.plotly_chart(fig, use_container_width=False)
 
     # under the charts: the void these curves were computed with (same two cards as under the MAP)
-    st.markdown(void_info_html(cfg.void), unsafe_allow_html=True)
+    st.markdown(void_info_html(cfg), unsafe_allow_html=True)
     # "Reference": shows / hides the two supporting charts below (void signal ΔT and relative contrast)
     show_reference = cfg.void.enabled and st.session_state.get("show_reference", False)
     if cfg.void.enabled:
@@ -861,9 +960,9 @@ if view == VIEW_SIGNAL:
         fig3.update_layout(width=SIG_W // 2 - 10, height=360, autosize=False)
         with c2.container(key="fixed_sig_contrast"):
             st.plotly_chart(fig3, use_container_width=False)
-        tau_void = cfg.void.depth ** 2 / cfg.copper.alpha
+        tau_void = cfg.void_depth_min ** 2 / cfg.copper.alpha
         st.caption(
-            f"참고: void 깊이 d = {cfg.void.depth * 1e6:.3g} μm 의 특징 시간 τ_void = d²/D = {fmt_time(tau_void)} "
+            f"참고: {'가장 얕은 ' if cfg.extra_voids else ''}void 깊이 d = {cfg.void_depth_min * 1e6:.3g} μm 의 특징 시간 τ_void = d²/D = {fmt_time(tau_void)} "
             f"(펄스폭 τp = {fmt_time(cfg.laser.tau_p)}, τp/τ_void = {cfg.laser.tau_p / tau_void:.2g}). "
             f"신호 피크는 보통 τ_void 이후에 나타납니다."
         )
@@ -925,10 +1024,10 @@ if view == VIEW_CHECKS:
         ("펄스 종료 후 Δt 증가율", f"+{(diag['dt_growth'] - 1) * 100:.0f} % / 스텝 (8스텝 블록 단위)"),
         ("펄스 중 스텝 수 N (Δt = τp/N) / Fo = D·Δt/Δz²", f"{round(100 / diag['fo'])} / {diag['fo']:g}"),
         ("스텝 수 / 행렬 재분해 횟수", f"{diag['n_steps']:,} / {diag.get('n_factorisations', 1)}"),
-        ("계산 차원 (void 케이스)", f"3D (r, θ, z), nθ = {diag['n_theta']} (반원), 미지수 {diag['n_cells']:,}, {diag['solver']}"
+        ("계산 차원 (void 케이스)", f"3D (r, θ, z), nθ = {diag['n_theta']} ({'전체 원주' if diag.get('full_circle') else '반원'}), 미지수 {diag['n_cells']:,}, {diag['solver']}"
          + (f", 평균 반복 {diag['mean_iterations']:.1f}회" if diag.get("mean_iterations") else "")
          if void.is_3d else "2D 축대칭 (r, z), 직접 LU"),
-        ("void 신호 예상 피크 시각 ≈ 2·d²/D", fmt_time(2.0 * cfg.void.depth ** 2 / cfg.copper.alpha)),
+        ("void 신호 예상 피크 시각 ≈ 2·d²/D", fmt_time(2.0 * cfg.void_depth_min ** 2 / cfg.copper.alpha)),
         ("셀 수 (nr × nz)", f"{diag['n_cells']:,} ({diag['nr']} × {diag['nz']})"),
         ("관측 시간창 t_end", fmt_time(diag["t_end"])),
         ("열 침투 깊이 √(D·t_end)", fmt_length(diag["L_diff"])),

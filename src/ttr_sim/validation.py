@@ -152,7 +152,7 @@ def kvoid_sensitivity(
     """Run the void case for each k_void candidate (baseline reused) and collect metrics."""
     rows = []
     for i, k in enumerate(ks):
-        c = replace(cfg, void=replace(cfg.void, k=k))
+        c = replace(cfg, void=replace(cfg.void, k=k), extra_voids=tuple(replace(v, k=k) for v in cfg.extra_voids))
         v = run_case(c, progress=_sub_progress(progress, i, len(ks), f"k_void = {k:g} W/m·K"), store_fields=False)
         s = void_signal(base, v)
         rows.append(dict(

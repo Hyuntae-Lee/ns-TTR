@@ -89,7 +89,8 @@ class VoidSpec:
     enabled: bool = True
     depth: float = 10e-6         # z of void top face, m
     thickness: float = 5e-6      # axial extent, m
-    r_center: float = 0.0        # radial centre (0 = on-axis disk, >0 = ring void), m
+    r_center: float = 0.0        # radial centre (0 = on-axis disk, >0 = ring void / off-axis void in 3-D), m
+    theta: float = 0.0           # azimuth of the void centre, rad (3-D only; the 2-D ring void ignores it)
     r_half: float = 10e-6        # radial half-extent, m
     k: float = 1.0               # "floor" conductivity used for the void, W/(m K)
     rho_cp: float = AIR.rho_cp   # volumetric heat capacity of the void filling
@@ -213,6 +214,16 @@ class SimConfig:
     copper: Material = COPPER
     silica: Material = FUSED_SILICA
     bottom: BottomStack = field(default_factory=BottomStack)
+    # Additional voids (same k / rho_cp as `void`).  `void` stays the primary one (GUI, presets, tests);
+    # several voids anywhere in the rod run in the full-circle 3-D solver.
+    extra_voids: tuple = ()
+
+    @property
+    def voids(self) -> list:
+        """All enabled voids (primary + extra); empty for the baseline."""
+        if not self.void.enabled:
+            return []
+        return [self.void, *self.extra_voids]
 
     @property
     def z_total(self) -> float:
@@ -230,15 +241,22 @@ class SimConfig:
 
     @property
     def dz_void(self) -> float:
-        """Axial spacing in the void zone: at least `void_cells` cells across the void thickness."""
-        v, n = self.void, self.numerics
-        return min(n.dz, v.thickness / n.void_cells) if v.thickness > 0 else n.dz
+        """Axial spacing in the void zones: at least `void_cells` cells across the (thinnest) void thickness."""
+        n = self.numerics
+        th = [v.thickness for v in (self.void, *self.extra_voids) if v.thickness > 0]
+        return min(n.dz, min(th) / n.void_cells) if th else n.dz
 
     @property
     def dr_void(self) -> float:
-        """Radial spacing in the void zone: at least `void_cells` cells across the radial half-width."""
-        v, n = self.void, self.numerics
-        return min(self.dr, v.r_half / n.void_cells) if v.r_half > 0 else self.dr
+        """Radial spacing in the void zones: at least `void_cells` cells across the (smallest) radial half-width."""
+        n = self.numerics
+        rh = [v.r_half for v in (self.void, *self.extra_voids) if v.r_half > 0]
+        return min(self.dr, min(rh) / n.void_cells) if rh else self.dr
+
+    @property
+    def void_depth_min(self) -> float:
+        """Top depth of the shallowest void (the primary void's depth if there is none)."""
+        return min((v.depth for v in self.voids), default=self.void.depth)
 
     @property
     def dt(self) -> float:
@@ -251,7 +269,7 @@ class SimConfig:
         extra = la.t_center - 0.5 * la.tau_p if la.profile == "gaussian" else 0.0
         t_pulse_based = n.t_end_factor * la.tau_p + extra
         if n.t_end_mode == "void" and self.void.depth > 0:
-            # uses the void depth even when the void is disabled, so the baseline run of a pair
+            # uses the primary void depth even when the void is disabled, so the baseline run of a pair
             # covers exactly the same window as the void run
             tau_void = self.void.depth ** 2 / self.copper.alpha
             return max(n.t_end_factor * tau_void, 2.0 * la.tau_p + extra)
@@ -338,9 +356,9 @@ class SimConfig:
             warnings.append(
                 f"Δz/δ_abs = {flux_ratio:.1f} < 7: 표면 flux 근사(Beer-Lambert 부피열원 → 표면 경계조건)의 유효 범위를 벗어납니다."
             )
-        if self.void.enabled and self.void.z_bottom > g.L:
+        if any(v.z_bottom > g.L for v in self.voids):
             warnings.append("void 하단이 로드 후면(z=L)을 넘습니다. void가 잘립니다.")
-        if self.void.enabled and self.void.r_outer > g.R_cu:
+        if any(v.r_outer > g.R_cu for v in self.voids):
             warnings.append("void 반경 범위가 구리 반경(40 μm)을 넘습니다. void가 구리 내부로 잘립니다.")
         if n.t_end_mode == "absolute" and n.t_end_abs < la.pulse_end * 1.05 * (1 - 1e-9):
             warnings.append(
@@ -349,7 +367,7 @@ class SimConfig:
                 f"관측창은 펄스가 끝나기 전에 멈출 수 없습니다."
             )
         if self.void.enabled:
-            t_peak_est = la.t_center + 2.0 * self.void.depth ** 2 / self.copper.alpha
+            t_peak_est = la.t_center + 2.0 * self.void_depth_min ** 2 / self.copper.alpha
             if t_peak_est > self.t_end:
                 warnings.append(
                     f"void 신호 피크 예상 시각 ≈ {t_peak_est * 1e6:.3g} μs (2·d²/D) 가 관측 시간창 {self.t_end * 1e6:.3g} μs 를 넘습니다. "
@@ -562,9 +580,11 @@ def build_grid(cfg: SimConfig) -> Grid:
     * everything else      : geometrically graded bridges / stretched tails (ratio `stretch`).
     The temperature field smooths as sqrt(D t) away from the surface, so cells growing roughly in
     proportion to distance lose no accuracy while keeping the cell count small."""
-    g, v, la, n = cfg.geometry, cfg.void, cfg.laser, cfg.numerics
+    g, la, n = cfg.geometry, cfg.laser, cfg.numerics
     dz, dr = n.dz, cfg.dr
     dz_v, dr_v = cfg.dz_void, cfg.dr_void
+    # the void zones are kept for the baseline too (same grid), so use the primary void even when disabled
+    void_list = [cfg.void, *cfg.extra_voids]
 
     # ---- axial zones
     z_s = min(g.L, max(10.0 * math.sqrt(cfg.copper.alpha * la.tau_p), 5.0 * dz))
@@ -573,9 +593,10 @@ def build_grid(cfg: SimConfig) -> Grid:
         zones_z = [(0.0, z_layer, dr, []), (z_layer, z_s, dz, [])]
     else:
         zones_z = [(0.0, z_s, dz, [])]
-    if v.thickness > 0 and v.depth < g.L:            # zone kept even for the baseline (same grid)
-        m = min(v.thickness, 5.0 * dz_v)
-        zones_z = _insert_zone(zones_z, (max(0.0, v.depth - m), min(g.L, v.z_bottom + m), dz_v, [v.depth, v.z_bottom]))
+    for v in void_list:
+        if v.thickness > 0 and v.depth < g.L:        # zone kept even for the baseline (same grid)
+            m = min(v.thickness, 5.0 * dz_v)
+            zones_z = _insert_zone(zones_z, (max(0.0, v.depth - m), min(g.L, v.z_bottom + m), dz_v, [v.depth, v.z_bottom]))
     b = cfg.bottom
     if b.enabled:
         # bottom stack: faces exactly at z = L and at the oxide/pad interface; thin oxide resolved by 4 cells,
@@ -590,10 +611,11 @@ def build_grid(cfg: SimConfig) -> Grid:
     # ---- radial zones inside the copper
     r_s = min(g.R_cu, 2.0 * la.w)
     zones_r = [(0.0, r_s, dr, [])]
-    if v.r_half > 0:                                  # zone kept even for the baseline (same grid)
-        m = min(v.r_half, 5.0 * dr_v)
-        bp = [p for p in (v.r_inner, v.r_outer) if 0.0 < p < g.R_cu]
-        zones_r = _insert_zone(zones_r, (max(0.0, v.r_inner - m), min(g.R_cu, v.r_outer + m), dr_v, bp))
+    for v in void_list:
+        if v.r_half > 0:                              # zone kept even for the baseline (same grid)
+            m = min(v.r_half, 5.0 * dr_v)
+            bp = [p for p in (v.r_inner, v.r_outer) if 0.0 < p < g.R_cu]
+            zones_r = _insert_zone(zones_r, (max(0.0, v.r_inner - m), min(g.R_cu, v.r_outer + m), dr_v, bp))
     r_faces = _zoned_axis(zones_r, g.R_cu, n.stretch)
 
     # ---- silica shell (or copper in the homogeneous validation mode)
@@ -617,8 +639,7 @@ def material_map(cfg: SimConfig, grid: Grid) -> np.ndarray:
     mat = np.full((grid.nz, grid.nr), MAT_COPPER, dtype=np.int8)
     if not cfg.geometry.homogeneous_copper:
         mat[np.broadcast_to(rc >= cfg.geometry.R_cu, mat.shape)] = MAT_SILICA
-    v = cfg.void
-    if v.enabled:
+    for v in cfg.voids:
         in_box = (zc >= v.depth) & (zc < v.z_bottom) & (rc >= v.r_inner) & (rc < v.r_outer)
         if v.shape == "ellipse":
             # Elliptical cross-section in the (r, z) plane: an oblate/prolate spheroid when on the axis,
@@ -881,8 +902,26 @@ def run_simulation(
 
 
 def baseline_config(cfg: SimConfig) -> SimConfig:
-    """Same configuration without the void (reference for the void signal)."""
-    return replace(cfg, void=replace(cfg.void, enabled=False))
+    """Same configuration without any void (reference for the void signal).  The primary void is kept
+    (disabled) so the grid zones, and hence the grid, are identical."""
+    return replace(cfg, void=replace(cfg.void, enabled=False), extra_voids=())
+
+
+def random_voids(n: int, r_half: float, thickness: float, geometry: Geometry, seed: int = 0, template: Optional[VoidSpec] = None) -> list:
+    """`n` identical voids spread uniformly over the copper rod's volume: centre radius with uniform area
+    density inside R_cu - r_half, azimuth uniform, centre depth uniform so that the void stays inside the
+    rod.  Voids may overlap (their union is the air region).  Deterministic for a given seed."""
+    rng = np.random.default_rng(seed)
+    base = template or VoidSpec()
+    voids = []
+    r_max = max(0.0, geometry.R_cu - r_half)
+    for _ in range(n):
+        rc = r_max * math.sqrt(rng.random())
+        th = 2.0 * math.pi * rng.random()
+        zc = 0.5 * thickness + rng.random() * max(0.0, geometry.L - thickness)
+        voids.append(replace(base, enabled=True, depth=zc - 0.5 * thickness, thickness=thickness, r_center=rc, theta=th,
+                             r_half=r_half, shape="ellipse"))
+    return voids
 
 
 def refined_config(cfg: SimConfig, factor: float) -> SimConfig:

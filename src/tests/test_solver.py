@@ -375,3 +375,124 @@ def test_flat_top_beam_partial_spot_and_analytic_flag():
     centre = center_step_response_flat(res.times[i_end], la.I0 * (1 - la.reflectivity), la.w, COPPER)
     assert Ts[0] == pytest.approx(float(centre), rel=0.05)              # semi-infinite disc-source centre value
     assert analytic_comparison(res)["available"] is False
+
+
+# ----------------------------------------------------------------------------- several voids / full-circle 3-D
+def test_full_circle_single_void_matches_half_cylinder():
+    """A void at theta = 1.3 rad (full-circle solver) is the same physical case as the void at theta = 0
+    (half-cylinder solver); only the azimuthal grid differs, so the signals must agree closely."""
+    from ttr_sim.solver3d import full_circle, run_simulation_3d, theta_faces
+    c0 = _cfg3d(15.0)
+    c1 = replace(c0, void=replace(c0.void, theta=1.3))
+    assert not full_circle(c0) and full_circle(c1)
+    th = theta_faces(c1)
+    assert th[0] == 0.0 and th[-1] == pytest.approx(2 * math.pi) and np.all(np.diff(th) > 0)
+    base = run_simulation(baseline_config(c0))
+    r0, r1 = run_simulation_3d(c0), run_simulation_3d(c1)
+    s0, s1 = void_signal(base, r0), void_signal(base, r1)
+    assert abs(r1.energy_error) < 1e-9
+    assert s1["peak_dT"] == pytest.approx(s0["peak_dT"], rel=0.03)
+    assert s1["t_peak"] == pytest.approx(s0["t_peak"], rel=0.1)
+
+
+def test_stacked_on_axis_voids_stay_2d():
+    """Two on-axis voids are axisymmetric: 2-D solve, exact energy balance, more signal than either alone."""
+    from ttr_sim.solver3d import needs_3d
+    p = DEPTH_PRESETS[3]
+    va = VoidSpec(enabled=True, depth=10e-6, thickness=5e-6, r_half=10e-6, k=0.026)
+    vb = replace(va, depth=30e-6)
+    mk = lambda void, extra=(): SimConfig(geometry=Geometry(), void=void, extra_voids=tuple(extra),  # noqa: E731
+                                          laser=Laser(tau_p=p.tau_p, energy=20e-9, w=10e-6, probe_w=5e-6),
+                                          numerics=Numerics(dz=p.dz, n_snapshots=4))
+    cab = mk(va, [vb])
+    assert not needs_3d(cab) and len(cab.voids) == 2 and cab.void_depth_min == va.depth
+    assert baseline_config(cab).voids == [] and baseline_config(cab).extra_voids == ()
+    _, ra, sa = run_pair(mk(va))
+    _, rb, sb = run_pair(mk(vb))
+    _, rab, sab = run_pair(cab)
+    assert not rab.is_3d and abs(rab.energy_error) < 1e-9
+    assert (rab.material == MAT_VOID).sum() > max((ra.material == MAT_VOID).sum(), (rb.material == MAT_VOID).sum())
+    assert sab["peak_dT"] > max(sa["peak_dT"], sb["peak_dT"])
+
+
+def test_random_voids_generator():
+    from ttr_sim import random_voids
+    g = Geometry()
+    vs = random_voids(50, 5e-6, 4e-6, g, seed=3)
+    assert len(vs) == 50
+    assert all(v.enabled and v.r_half == 5e-6 and v.thickness == 4e-6 for v in vs)
+    assert all(0.0 <= v.r_center <= g.R_cu - v.r_half for v in vs)             # void inside the rod radially
+    assert all(0.0 <= v.depth and v.z_bottom <= g.L + 1e-12 for v in vs)       # ... and axially
+    assert all(0.0 <= v.theta < 2 * math.pi for v in vs)
+    assert min(v.theta for v in vs) < 1.0 and max(v.theta for v in vs) > 5.0  # spread around the circle
+    assert [v.depth for v in random_voids(50, 5e-6, 4e-6, g, seed=3)] == [v.depth for v in vs]   # deterministic
+    assert [v.depth for v in random_voids(50, 5e-6, 4e-6, g, seed=4)] != [v.depth for v in vs]
+
+
+def test_random_arrangement_runs_on_the_full_circle():
+    from ttr_sim import random_voids
+    from ttr_sim.solver3d import full_circle, needs_3d
+    from ttr_sim.validation import run_pair
+    c = _cfg3d(0.0)
+    vs = random_voids(2, 8e-6, 10e-6, c.geometry, seed=7, template=c.void)
+    c = replace(c, void=vs[0], extra_voids=tuple(vs[1:]))
+    assert needs_3d(c) and full_circle(c)
+    base, r, sig = run_pair(c)
+    assert r.is_3d and r.diagnostics["full_circle"] and abs(r.energy_error) < 1e-9
+    assert sig["peak_dT"] > 0
+
+
+def test_fit_resolution_lowers_void_cells_until_the_unknowns_fit():
+    """Many small voids over the rod: the mesh is coarsened per void (void_cells 8 -> >= 3) instead of failing
+    inside the solver; a single void that already fits is left alone."""
+    from ttr_sim import random_voids
+    from ttr_sim.solver3d import count_unknowns, fit_resolution, max_unknowns
+    c1 = _cfg3d(15.0, void_cells=8)
+    assert fit_resolution(c1) is c1 and count_unknowns(c1)[2] <= max_unknowns(c1)
+    p = DEPTH_PRESETS[2]
+    vs = random_voids(10, 5e-6, 5e-6, Geometry(), seed=1, template=VoidSpec(k=0.026))
+    c = SimConfig(Geometry(), vs[0], Laser(tau_p=p.tau_p), Numerics(dz=p.dz, void_cells=8), extra_voids=tuple(vs[1:]))
+    assert count_unknowns(c)[2] > max_unknowns(c)
+    f = fit_resolution(c)
+    assert 3 <= f.numerics.void_cells < 8 and count_unknowns(f)[2] <= max_unknowns(f)
+    assert f.voids == c.voids and f.laser == c.laser
+    # hopeless case (tiny voids under a short pulse): stops at the floor, the caller sees it is still too big
+    tiny = random_voids(10, 1e-6, 1e-6, Geometry(), seed=1, template=VoidSpec(k=0.026))
+    c2 = SimConfig(Geometry(), tiny[0], Laser(tau_p=p.tau_p), Numerics(dz=p.dz, void_cells=8), extra_voids=tuple(tiny[1:]))
+    f2 = fit_resolution(c2)
+    assert f2.numerics.void_cells == 3 and count_unknowns(f2)[2] > max_unknowns(f2)
+    with pytest.raises(ValueError, match="한도"):
+        run_pair(c2)
+
+
+def test_3d_solver_falls_back_to_ilu_when_the_structured_preconditioner_cannot_be_built(monkeypatch):
+    """A failed SuperLU allocation inside the structured preconditioner must not abort the run: the solver
+    switches to the ILU-preconditioned BiCGSTAB and still converges."""
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spla
+    from ttr_sim import solver3d
+    from ttr_sim.solver3d import _Solver, SOLVER_ILU, SOLVER_STRUCTURED, theta_faces
+    cfg = _cfg3d(15.0)
+    g = build_grid(cfg)
+    th = theta_faces(cfg)
+    mat = solver3d.material_map_3d(cfg, g, th)
+    k3, rho_cp = solver3d._properties(cfg, mat)
+    Lap = solver3d.assemble_laplacian_3d(g, k3, th, solver3d.interface_resistance(cfg, g))
+    dth = np.diff(th)
+    V = 0.5 * (g.r_faces[1:] ** 2 - g.r_faces[:-1] ** 2)[None, :, None] * dth[None, None, :] * g.dz_c[:, None, None]
+    A = (sp.diags((rho_cp * V).ravel() / cfg.dt) + 0.5 * Lap).tocsc()
+    b = np.random.default_rng(0).random(A.shape[0])
+    ok = _Solver(A, False, nth=len(dth), th_faces=th, periodic=False)
+    assert ok.kind == SOLVER_STRUCTURED
+    x_ok = ok.solve(b, np.zeros_like(b))
+
+    def boom(*a, **k):
+        raise RuntimeError("SUPERLU_MALLOC fails for buf in intCalloc()")
+    monkeypatch.setattr(solver3d._StructuredPC, "__init__", boom)
+    fb = _Solver(A, False, nth=len(dth), th_faces=th, periodic=False)
+    assert fb.kind == SOLVER_ILU
+    x_fb = fb.solve(b, np.zeros_like(b))
+    assert np.linalg.norm(A @ x_fb - b) < 1e-8 * np.linalg.norm(b) and np.allclose(x_fb, x_ok, rtol=1e-7, atol=1e-9)
+    monkeypatch.setattr(solver3d._StructuredPC, "__init__", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("other")))
+    with pytest.raises(RuntimeError, match="other"):                      # unrelated errors are not swallowed
+        _Solver(A, False, nth=len(dth), th_faces=th, periodic=False)

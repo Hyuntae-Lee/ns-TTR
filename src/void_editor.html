@@ -44,6 +44,7 @@
   #info .k { color: #6b7280; margin-right: 6px; white-space: nowrap; }
   #info .k.second { margin-left: 26px; }                               /* gap between the two pairs */
   #info .u { color: #6b7280; margin-left: 4px; }
+  #infotext .txt { max-width: 900px; line-height: 1.45; }
   #info input { width: 5.6em; box-sizing: border-box; padding: 2px 6px; border: 1px solid #d5d9e0; border-radius: 6px;
                 background: #ffffff; color: #31333f; font: inherit; font-weight: 600; text-align: right;
                 font-variant-numeric: tabular-nums; }
@@ -75,6 +76,7 @@
   // axisymmetric — so Streamlit receives |rc| and `side` remembers which side to draw it on.
   let geom = null, side = 1;
   let drag = null;                       // active drag: {zone, x, y, g0}
+  let editable = true;                   // false for a random arrangement (static_voids): no drag, no fields
   // Decoded temperature snapshots of the current result (decoded once per result key) and the shown one.
   let frames = null, framesKey = null, cur = 0;
 
@@ -125,6 +127,12 @@
     });
     box.appendChild(grid);
     info.appendChild(box);
+    const txt = el("div", "sec");
+    txt.id = "infotext";
+    txt.appendChild(el("div", "sec-h", "Void 배치"));
+    txt.appendChild(el("div", "txt"));
+    txt.style.display = "none";
+    info.appendChild(txt);
   })();
 
   function fitFrame() {
@@ -133,6 +141,10 @@
 
   // Show a geometry in the fields (3 decimals).  A field being typed in is left alone.
   function showInfo(g) {
+    const txt = document.getElementById("infotext");
+    txt.style.display = args.info_text ? "" : "none";
+    txt.querySelector(".txt").textContent = args.info_text || "";
+    info.firstChild.style.display = args.info_text ? "none" : "";   // the fields card
     FIELDS.forEach(function (f) {
       const inp = inputs[f[0]];
       if (document.activeElement !== inp) inp.value = (f[0] === "rc" ? Math.abs(g.rc) : g[f[0]]).toFixed(3);
@@ -199,7 +211,8 @@
     const a = args, R = a.R, L = a.L, res = a.result || null;
     if (res && res.key !== framesKey) { frames = decode(res); framesKey = res.key; cur = res.init; }
     if (!res) { frames = null; framesKey = null; }
-    const runVoid = res && res.void ? res.void : null;       // the void the shown temperatures were computed with
+    const runVoid = res && res.void && !a.static_voids ? res.void : null;   // the void the shown temperatures were computed with
+    editable = !a.static_voids;                              // a random arrangement is display-only
     // Pending geometry from the args, unless they predate the last value we sent (then keep the dragged shape).
     if (geom === null || a.applied_seq >= sentSeq) {
       const g = { rc: a.rc, rh: a.rh, depth: a.depth, thick: a.thick };
@@ -222,8 +235,15 @@
           fillcolor: "#141466", line: { width: 0 } },
         ellipse(runVoid || { rc: 0, rh: 1, depth: 0, thick: 1 },
                 { visible: !!runVoid, line: { color: "#ffffff", width: 1.5, dash: "dash" }, fillcolor: "rgba(0,0,0,0)" }),
-        ellipse(geom, { line: { color: "magenta", width: 2 }, fillcolor: "rgba(255, 0, 255, 0.18)" }),
-      ],
+        ellipse(geom, { visible: editable, line: { color: "magenta", width: 2 }, fillcolor: "rgba(255, 0, 255, 0.18)" }),
+      ].concat((a.static_voids || []).map(function (v) {
+        // random arrangement: outline at the void's projection on the displayed plane, fainter the further
+        // the void is from that plane (side = |sin theta|)
+        const alpha = 1.0 - 0.75 * v.side;
+        return { type: "circle", xref: "x", yref: "y", x0: v.x - v.rh, x1: v.x + v.rh, y0: v.depth, y1: v.depth + v.thick,
+                 line: { color: "rgba(255, 0, 255, " + alpha.toFixed(2) + ")", width: 2 },
+                 fillcolor: "rgba(255, 0, 255, " + (0.18 * alpha).toFixed(3) + ")" };
+      })),
       dragmode: false,
       height: a.height, width: window.innerWidth, margin: { l: 60, r: 10, t: 20, b: 50 },
       plot_bgcolor: "#e8e8e8",
@@ -238,7 +258,7 @@
   // ---- mouse interaction ---------------------------------------------------------------------------------
   // Zone under the mouse: {col: 'l'|'c'|'r', row: 't'|'c'|'b'} inside the (enlarged) void box, else null.
   function zoneAt(clientX, clientY) {
-    if (!ready || !gd._fullLayout) return null;
+    if (!ready || !editable || !gd._fullLayout) return null;
     const xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis, rect = gd.getBoundingClientRect();
     const px = clientX - rect.left - xa._offset, py = clientY - rect.top - ya._offset;
     const xs = [xa.d2p(geom.rc - geom.rh), xa.d2p(geom.rc + geom.rh)];
