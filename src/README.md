@@ -33,6 +33,27 @@ Community Cloud에서 `app.py`를 진입점으로 지정하면 됩니다. 별도
 | `ttr_sim/analytic.py` | Carslaw & Jaeger 형 semi-infinite 해석해 (Gaussian spot, square/Gaussian 펄스) |
 | `ttr_sim/validation.py` | 에너지 보존 / grid convergence / 해석해 비교 / k_void 스윕 |
 | `tests/test_solver.py` | pytest 검증 스위트 |
+| `app_cw.py` | **CW 투과 모드** GUI (`streamlit run app_cw.py`, 아래 참조) |
+| `ttr_sim/transmission.py` | CW 투과 구성 빌더, 스텝 응답, 주파수 영역 직접 풀이, 1-D 슬래브 해석해 |
+| `ttr_sim/analysis.py` | CW 분석 방법: 스텝 절편, Parker, 양면 온도차, 핀 모델 피팅, 락인 TLM 역산(유리 껍질 모델) |
+| `tests/test_cw.py` | CW 모드 검증 스위트 |
+| `studies/cw_lateral_loss.py` | CW 측면 손실 민감도 스터디 → `results/cw_lateral_loss` |
+
+## CW 투과 모드 (`app_cw.py`)
+
+스펙 `docs/cw-transmission-spec.md`. CW 레이저(기본 10 mW, 플랫 타원 12×10 µm → 등가 원형 반경 5.5 µm)로 비아 **바닥면 z = 0** 을
+가열하고 윗면(z = L)·바닥면 프로브(지름 8 µm)의 온도 상승을 읽어 비아의 유효 열전도도 k_eff 를 뽑는다. 기판은 공중에 떠 있어
+상하면 단열, 열은 유리로만 샌다. 같은 `ttr_sim` 코어를 쓰며 `Laser(mode="cw", power=…)`, 반대면 프로브
+(`SimResult.dT_probe_far`), `Geometry.R_out / outer_bc`, `Numerics.far_layer` 가 추가됐다 (기본값 = 기존 동작, 반사 모드 결과 불변).
+
+* 스텝 응답(CN 시간 적분) + **주파수 영역 직접 풀이** `(A + iωC)T̂ = b` 로 락인 진폭·위상을 정확히 구하고 스텝 응답 FFT 와 교차 검증.
+* 외곽 경계 옵션: `far`(무한 유리, 단열) / `neighbor_sink`(이웃 비아 = 싱크, 하한) / `neighbor_adiabatic`(대칭 셀, 상한).
+* 분석 방법(`ttr_sim/analysis.py`): 스텝 절편 L²/(6α), Parker 반상승, 양면 온도차 R_th, 1-D 핀 모델 피팅, 락인 TLM 역산
+  (단열 / 균일 손실 G′ / **유리 껍질 어드미턴스** 모델). 측면 손실 스터디 결과: 유리 껍질 TLM 만이 모든 경계·피치에서 ±2 % 안에 들고,
+  나머지는 −36 %…+30 % 편향 (`results/cw_lateral_loss/summary.md`).
+* 검증(`tests/test_cw.py`): 측면 단열 Cu 막대의 반대면 곡선이 Carslaw–Jaeger 상수-flux 해석해와 0.05 % RMS 일치, 절편 L²/(6α) 0.2 % 이내,
+  에너지 보존 1e-13, 주파수 풀이 = 1-D TLM 해석해 (0.5 %), 스텝 FFT = 주파수 풀이 (1 %).
+* 아직 없는 것: 타원 스팟·정렬 오차(3-D, 스펙 7단계), 3-D 솔버의 반대면 기록(축 밖/다중 void 의 CW 모드).
 
 ## 물리·수치 모델 요약
 
