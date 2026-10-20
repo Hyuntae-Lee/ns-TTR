@@ -1,0 +1,95 @@
+{
+ "id": "B_N6",
+ "series": "B",
+ "label": "70 μm + 더 깊은 void 6개 (90~165 μm)",
+ "n_voids": 7,
+ "depth_min_um": 70.0,
+ "depth_max_um": 165.0,
+ "blocked_area_frac": 0.43750000000000006,
+ "void_volume_um3": 14660.765716752368,
+ "tau_p_s": 2.758620689655173e-05,
+ "energy_J": 9.000000000000001e-08,
+ "window_s": 0.001,
+ "dT_base_max_K": 0.12972027279812437,
+ "t_base_peak_s": 2.7458122613065236e-05,
+ "void_minus_base_K": 0.00023818650521434392,
+ "t_peak_s": 7.802992955173406e-05,
+ "ratio": 0.02034703830867947,
+ "base_at_peak_K": 0.011706200263688515,
+ "dRR_diff": -3.572797578215158e-08,
+ "contrast_max": 0.025142627145645562,
+ "t_contrast_max_s": 0.00014730758442845507,
+ "dT_at_contrast_max_K": 0.00018891970995582597,
+ "peak_at_window_end": false,
+ "is_3d": true,
+ "full_circle": true,
+ "n_unknowns": 579072,
+ "n_theta": 58,
+ "void_cells": 8,
+ "n_steps": 323,
+ "solver": "구조 전처리 CG",
+ "mean_iterations": 10.808049535603715,
+ "energy_error": -2.5379739372266154e-12,
+ "wall_s": 1328.187747001648,
+ "scale": 77.08895290069565,
+ "scaled_void_minus_base_K": 0.018361548282049858,
+ "scaled_dRR_diff": 2.7542322423074786e-06,
+ "noise_margin": 0.9180774141024929,
+ "ratio_margin": 1.0173519154339734,
+ "noise_ok": false,
+ "ratio_ok": true,
+ "detectable": false,
+ "limiting": "잡음",
+ "voids": [
+  {
+   "depth": 70.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 0.0,
+   "theta": 0.0
+  },
+  {
+   "depth": 90.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 0.0
+  },
+  {
+   "depth": 105.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 40.0
+  },
+  {
+   "depth": 120.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 80.0
+  },
+  {
+   "depth": 135.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 120.0
+  },
+  {
+   "depth": 150.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 160.0
+  },
+  {
+   "depth": 165.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 200.0
+  }
+ ],
+ "baseline_grid_fixed": true
+}

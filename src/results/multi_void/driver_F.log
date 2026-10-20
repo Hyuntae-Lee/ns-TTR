@@ -1,0 +1,12 @@
+5 cases, 5 to run, 4 workers
+  F_seed4        무작위 10개, 윗면 깊이 ≥ 70 μm (시드 4)
+  F_seed3        무작위 10개, 윗면 깊이 ≥ 70 μm (시드 3)
+  F_seed5        무작위 10개, 윗면 깊이 ≥ 70 μm (시드 5)
+  F_seed2        무작위 10개, 윗면 깊이 ≥ 70 μm (시드 2)
+  F_seed1        무작위 10개, 윗면 깊이 ≥ 70 μm (시드 1)
+15:05:27  F_seed2        voids 10  3D N=  713,388  peak   0.07275 mK at  140.4 us  ratio   0.937 %  contrast max   1.315 %  불가(잡음+비율)  (27.2 min)
+15:13:26  F_seed5        voids 10  3D N=  848,100  peak    0.2012 mK at   67.4 us  ratio   1.543 %  contrast max   1.923 %  불가(잡음+비율)  (35.2 min)
+15:13:45  F_seed3        voids 10  3D N=  858,624  peak   0.09749 mK at   49.4 us  ratio   0.586 %  contrast max   1.183 %  불가(잡음+비율)  (35.5 min)
+15:16:31  F_seed4        voids 10  3D N=  947,894  peak   0.05184 mK at  161.1 us  ratio   0.734 %  contrast max   1.077 %  불가(잡음+비율)  (38.3 min)
+15:25:19  F_seed1        voids 10  3D N=  709,920  peak   0.04531 mK at  266.5 us  ratio   0.908 %  contrast max   1.251 %  불가(잡음+비율)  (19.9 min)
+all done in 0.79 h

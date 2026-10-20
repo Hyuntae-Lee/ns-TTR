@@ -1,0 +1,2412 @@
+{
+ "A1": {
+  "P1": [
+   {
+    "id": "P1_g05",
+    "parts": [
+     "S_axis_d070",
+     "S_axis_d085"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.14526854721452764,
+    "peak_sum_mK": 0.1570639595342982,
+    "R_peak": 0.9249005796444679,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.07837980430579487,
+    "computed": {
+     "noise_margin": 0.5590926478071873,
+     "ratio_margin": 0.457166961957697,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.6044894555284014,
+     "ratio_margin": 0.4942876802320009,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "gap_um": 5.0
+   },
+   {
+    "id": "P1_g10",
+    "parts": [
+     "S_axis_d070",
+     "S_axis_d090"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.14171453221933916,
+    "peak_sum_mK": 0.14785323475052792,
+    "R_peak": 0.9584811076907005,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.04077631337735017,
+    "computed": {
+     "noise_margin": 0.5454147048417134,
+     "ratio_margin": 0.4559775020051671,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.5690406419755092,
+     "ratio_margin": 0.4757292536560981,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "gap_um": 10.0
+   },
+   {
+    "id": "P1_g20",
+    "parts": [
+     "S_axis_d070",
+     "S_axis_d100"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.1303068796687512,
+    "peak_sum_mK": 0.1321767882700442,
+    "R_peak": 0.9858529729329429,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.012582917145662361,
+    "computed": {
+     "noise_margin": 0.501508524241817,
+     "ratio_margin": 0.4283030111643449,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.5087051903386909,
+     "ratio_margin": 0.43444917540810396,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "gap_um": 20.0
+   },
+   {
+    "id": "P1_g35",
+    "parts": [
+     "S_axis_d070",
+     "S_axis_d115"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.1143569702435343,
+    "peak_sum_mK": 0.11484681317597278,
+    "R_peak": 0.9957348147598322,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.0032761077048777034,
+    "computed": {
+     "noise_margin": 0.4401231998703707,
+     "ratio_margin": 0.3758816433050426,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.4420084477778624,
+     "ratio_margin": 0.3774917153978431,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "gap_um": 35.0
+   },
+   {
+    "id": "P1_g50",
+    "parts": [
+     "S_axis_d070",
+     "S_axis_d130"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.10412437399054397,
+    "peak_sum_mK": 0.10429871241512956,
+    "R_peak": 0.9983284700208792,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.0013687047760936382,
+    "computed": {
+     "noise_margin": 0.4007409411425006,
+     "ratio_margin": 0.3276906568337497,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.40141191318937286,
+     "ratio_margin": 0.328239318695275,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "gap_um": 50.0
+   },
+   {
+    "id": "P1_g80",
+    "parts": [
+     "S_axis_d070",
+     "S_axis_d160"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.0970497213188537,
+    "peak_sum_mK": 0.09706988254265525,
+    "R_peak": 0.9997923019656205,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.0005457321015045749,
+    "computed": {
+     "noise_margin": 0.3735127631723231,
+     "ratio_margin": 0.28644313959785045,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.37359035715516736,
+     "ratio_margin": 0.2865026456341932,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "gap_um": 80.0
+   }
+  ],
+  "P2": [
+   {
+    "id": "P2_s22",
+    "parts": [
+     "A_d070_r25",
+     "A_d070_r25"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.21175723594524243,
+    "peak_sum_mK": 0.20135993804615282,
+    "R_peak": 1.0516353848733628,
+    "dt_peak_us": 0.9762872386470441,
+    "l2_rel": 0.04788820376688135,
+    "computed": {
+     "noise_margin": 0.8160935383643341,
+     "ratio_margin": 0.6361305401168248,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.7760232777471702,
+     "ratio_margin": 0.5947542553062688,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "spacing_um": 22.0
+   },
+   {
+    "id": "P2_s25",
+    "parts": [
+     "A_d070_r25",
+     "A_d070_r25"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.20746302442375963,
+    "peak_sum_mK": 0.20135993804615282,
+    "R_peak": 1.0303093377800303,
+    "dt_peak_us": 0.9762872386470441,
+    "l2_rel": 0.028628284236607345,
+    "computed": {
+     "noise_margin": 0.7995440293975754,
+     "ratio_margin": 0.6232304893471636,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.7760232777471702,
+     "ratio_margin": 0.5947542553062688,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "spacing_um": 25.0
+   },
+   {
+    "id": "P2_s30",
+    "parts": [
+     "A_d070_r25",
+     "A_d070_r25"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.2038717684627045,
+    "peak_sum_mK": 0.20135993804615282,
+    "R_peak": 1.0124743304995254,
+    "dt_peak_us": 0.9762872386470441,
+    "l2_rel": 0.012140111118934448,
+    "computed": {
+     "noise_margin": 0.7857036485891136,
+     "ratio_margin": 0.6124421562637336,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.7760232777471702,
+     "ratio_margin": 0.5947542553062688,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "spacing_um": 30.0
+   },
+   {
+    "id": "P2_s35",
+    "parts": [
+     "A_d070_r25",
+     "A_d070_r25"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.20400723974489665,
+    "peak_sum_mK": 0.20135993804615282,
+    "R_peak": 1.0131471122033076,
+    "dt_peak_us": 0.9762872386470441,
+    "l2_rel": 0.01282678508200926,
+    "computed": {
+     "noise_margin": 0.7862257428520908,
+     "ratio_margin": 0.6128491195466009,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.7760232777471702,
+     "ratio_margin": 0.5947542553062688,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "spacing_um": 35.0
+   },
+   {
+    "id": "P2_s42",
+    "parts": [
+     "A_d070_r25",
+     "A_d070_r25"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.2032066780088826,
+    "peak_sum_mK": 0.20135993804615282,
+    "R_peak": 1.0091713375592442,
+    "dt_peak_us": 0.9762872386470441,
+    "l2_rel": 0.009199189189134397,
+    "computed": {
+     "noise_margin": 0.7831404491812207,
+     "ratio_margin": 0.6104441874683452,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.7760232777471702,
+     "ratio_margin": 0.5947542553062688,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "spacing_um": 42.0
+   },
+   {
+    "id": "P2_s50",
+    "parts": [
+     "A_d070_r25",
+     "A_d070_r25"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.20261854876935104,
+    "peak_sum_mK": 0.20135993804615282,
+    "R_peak": 1.0062505517999798,
+    "dt_peak_us": 0.9762872386470441,
+    "l2_rel": 0.006594979175577731,
+    "computed": {
+     "noise_margin": 0.7808738514427191,
+     "ratio_margin": 0.6086774144504992,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.7760232777471702,
+     "ratio_margin": 0.5947542553062688,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "spacing_um": 50.0
+   }
+  ],
+  "P3": [
+   {
+    "id": "P1_g10",
+    "parts": [
+     "S_axis_d070",
+     "S_axis_d090"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.14171453221933916,
+    "peak_sum_mK": 0.14785323475052792,
+    "R_peak": 0.9584811076907005,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.04077631337735017,
+    "computed": {
+     "noise_margin": 0.5454147048417134,
+     "ratio_margin": 0.4559775020051671,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.5690406419755092,
+     "ratio_margin": 0.4757292536560981,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "rc_lower_um": 0.0
+   },
+   {
+    "id": "P3_r10",
+    "parts": [
+     "S_axis_d070",
+     "S_d090_r10"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.14647309740212222,
+    "peak_sum_mK": 0.15068141954088787,
+    "R_peak": 0.9720713930649976,
+    "dt_peak_us": 1.4424208954408664,
+    "l2_rel": 0.029997966651575718,
+    "computed": {
+     "noise_margin": 0.5643181474228194,
+     "ratio_margin": 0.4815927362203781,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.5805315858987389,
+     "ratio_margin": 0.4849986152721694,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "rc_lower_um": 10.0
+   },
+   {
+    "id": "P3_r15",
+    "parts": [
+     "S_axis_d070",
+     "S_d090_r15"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.1487073708403841,
+    "peak_sum_mK": 0.1511662717348372,
+    "R_peak": 0.9837337994366475,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.02032036638444322,
+    "computed": {
+     "noise_margin": 0.5730838504746625,
+     "ratio_margin": 0.4890038647221259,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.5825598864274554,
+     "ratio_margin": 0.4970896242481072,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "rc_lower_um": 15.0
+   },
+   {
+    "id": "P3_r20",
+    "parts": [
+     "S_axis_d070",
+     "S_d090_r20"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.14885539741271714,
+    "peak_sum_mK": 0.14994825943404066,
+    "R_peak": 0.9927117391995853,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.013825906667531168,
+    "computed": {
+     "noise_margin": 0.573731244081548,
+     "ratio_margin": 0.48953766052522657,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.5779434466486135,
+     "ratio_margin": 0.4931317332057909,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "rc_lower_um": 20.0
+   },
+   {
+    "id": "P3_r25",
+    "parts": [
+     "S_axis_d070",
+     "A_d090_r25"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.15049483664597574,
+    "peak_sum_mK": 0.15078878317353883,
+    "R_peak": 0.9980506074697559,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.010938099921845211,
+    "computed": {
+     "noise_margin": 0.5800737176740058,
+     "ratio_margin": 0.49494797559720083,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.5812067177080337,
+     "ratio_margin": 0.4959147080246623,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "rc_lower_um": 25.0
+   }
+  ],
+  "B": [
+   {
+    "id": "B_N1",
+    "parts": [
+     "A_d070_axis",
+     "A_d090_r25"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.15049483664597574,
+    "peak_sum_mK": 0.15078878317353883,
+    "R_peak": 0.9980506074697559,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.010938099921845211,
+    "computed": {
+     "noise_margin": 0.5800737176740058,
+     "ratio_margin": 0.49494797559720083,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.5812067177080337,
+     "ratio_margin": 0.4959147080246623,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "n_added": 1
+   },
+   {
+    "id": "B_N3",
+    "parts": [
+     "A_d070_axis",
+     "A_d090_r25",
+     "A_d105_r25",
+     "A_d120_r25"
+    ],
+    "n_voids": 4,
+    "peak_computed_mK": 0.20819113768766329,
+    "peak_sum_mK": 0.211006319432272,
+    "R_peak": 0.9866583060062696,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.0165383971989354,
+    "computed": {
+     "noise_margin": 0.8024617638185446,
+     "ratio_margin": 0.7792882429255285,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.8133127334291609,
+     "ratio_margin": 0.789825857829019,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "n_added": 3
+   },
+   {
+    "id": "B_N6",
+    "parts": [
+     "A_d070_axis",
+     "A_d090_r25",
+     "A_d105_r25",
+     "A_d120_r25",
+     "A_d135_r25",
+     "A_d150_r25",
+     "A_d165_r25"
+    ],
+    "n_voids": 7,
+    "peak_computed_mK": 0.23818650521434392,
+    "peak_sum_mK": 0.24276052687355332,
+    "R_peak": 0.9811582973635913,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.019272405816889708,
+    "computed": {
+     "noise_margin": 0.9180774141024929,
+     "ratio_margin": 1.0173519154339734,
+     "detectable": false,
+     "verdict": "불가(잡음)"
+    },
+    "summed": {
+     "noise_margin": 0.9357077411151704,
+     "ratio_margin": 1.036888663294838,
+     "detectable": false,
+     "verdict": "불가(잡음)"
+    },
+    "verdict_flips": false,
+    "n_added": 6
+   },
+   {
+    "id": "B_N9",
+    "parts": [
+     "A_d070_axis",
+     "A_d090_r25",
+     "A_d105_r25",
+     "A_d120_r25",
+     "A_d135_r25",
+     "A_d150_r25",
+     "A_d165_r25",
+     "A_d180_r25",
+     "A_d195_r25",
+     "A_d210_r25"
+    ],
+    "n_voids": 10,
+    "peak_computed_mK": 0.2457738252701347,
+    "peak_sum_mK": 0.2499152309951569,
+    "R_peak": 0.983428758189202,
+    "dt_peak_us": 3.1486239184089935,
+    "l2_rel": 0.016342927642585332,
+    "computed": {
+     "noise_margin": 0.947322342697395,
+     "ratio_margin": 1.1392981088741632,
+     "detectable": false,
+     "verdict": "불가(잡음)"
+    },
+    "summed": {
+     "noise_margin": 0.9632851742526929,
+     "ratio_margin": 1.1286615821285433,
+     "detectable": false,
+     "verdict": "불가(잡음)"
+    },
+    "verdict_flips": false,
+    "n_added": 9
+   }
+  ],
+  "C": [
+   {
+    "id": "C_stack3",
+    "parts": [
+     "S_axis_d070",
+     "S_axis_d090",
+     "S_axis_d105",
+     "S_axis_d120"
+    ],
+    "n_voids": 4,
+    "peak_computed_mK": 0.18510292625251168,
+    "peak_sum_mK": 0.2038927245848754,
+    "R_peak": 0.9078446846466952,
+    "dt_peak_us": -2.1311126042042106,
+    "l2_rel": 0.0934793569426497,
+    "computed": {
+     "noise_margin": 0.7124038888670946,
+     "ratio_margin": 0.6753025146845573,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.78472000873623,
+     "ratio_margin": 0.7628145313974557,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "R_peak_with_r25_proxy": 0.8772387801016799
+   }
+  ],
+  "D": [
+   {
+    "id": "D_N2",
+    "parts": [
+     "A_d070_axis",
+     "A_d070_r25"
+    ],
+    "n_voids": 2,
+    "peak_computed_mK": 0.20182127445877995,
+    "peak_sum_mK": 0.1964771483358163,
+    "R_peak": 1.0271997337513752,
+    "dt_peak_us": 0.0,
+    "l2_rel": 0.025274751861890706,
+    "computed": {
+     "noise_margin": 0.7779053350576224,
+     "ratio_margin": 0.5961177314498258,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "summed": {
+     "noise_margin": 0.7573067919485148,
+     "ratio_margin": 0.5803328329075589,
+     "detectable": false,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "n_total": 2
+   },
+   {
+    "id": "D_N3",
+    "parts": [
+     "A_d070_axis",
+     "A_d070_r25",
+     "A_d070_r25"
+    ],
+    "n_voids": 3,
+    "peak_computed_mK": 0.3101078056602091,
+    "peak_sum_mK": 0.2971571173588927,
+    "R_peak": 1.0435819556213932,
+    "dt_peak_us": 0.9762872386470441,
+    "l2_rel": 0.040681682118850246,
+    "computed": {
+     "noise_margin": 1.195287846204533,
+     "ratio_margin": 0.9315823943319647,
+     "detectable": false,
+     "verdict": "불가(비율)"
+    },
+    "summed": {
+     "noise_margin": 1.1453703657541756,
+     "ratio_margin": 0.8777103759709536,
+     "detectable": false,
+     "verdict": "불가(비율)"
+    },
+    "verdict_flips": false,
+    "n_total": 3
+   },
+   {
+    "id": "D_N6",
+    "parts": [
+     "A_d070_axis",
+     "A_d070_r25",
+     "A_d070_r25",
+     "A_d070_r25",
+     "A_d070_r25",
+     "A_d070_r25"
+    ],
+    "n_voids": 6,
+    "peak_computed_mK": 0.6604178023508211,
+    "peak_sum_mK": 0.599197024428122,
+    "R_peak": 1.102171365054973,
+    "dt_peak_us": 0.9762872386470441,
+    "l2_rel": 0.09150977279981772,
+    "computed": {
+     "noise_margin": 2.545532096125283,
+     "ratio_margin": 1.9839345748283264,
+     "detectable": true,
+     "verdict": "가능"
+    },
+    "summed": {
+     "noise_margin": 2.3095610871711587,
+     "ratio_margin": 1.769843005161138,
+     "detectable": true,
+     "verdict": "가능"
+    },
+    "verdict_flips": false,
+    "n_total": 6
+   }
+  ]
+ },
+ "A2": {
+  "70": {
+   "slope": 0.9681218368499552,
+   "scatter": 0.04260102586099444,
+   "shapes": [
+    {
+     "id": "A_d070_axis",
+     "rh": 10.0,
+     "thick": 10.0,
+     "L_z": 0.5272002825625699,
+     "pol_um3": 4429.772322506445,
+     "peak_mK": 0.09580232170947056,
+     "t_peak_us": 47.48908707727935,
+     "l2_shape_vs_ref": 0.0
+    },
+    {
+     "id": "E_rh7.1_th20",
+     "rh": 7.1,
+     "thick": 20.0,
+     "L_z": 0.2473998204576699,
+     "pol_um3": 2805.698430097244,
+     "peak_mK": 0.06246167714607509,
+     "t_peak_us": 50.884082450014304,
+     "l2_shape_vs_ref": 0.08938296992347715
+    },
+    {
+     "id": "E_rh10_th2",
+     "rh": 10.0,
+     "thick": 2.0,
+     "L_z": 0.8608042765278006,
+     "pol_um3": 3009.280817181849,
+     "peak_mK": 0.05933501671506747,
+     "t_peak_us": 45.536512599985265,
+     "l2_shape_vs_ref": 0.07975326379111367
+    },
+    {
+     "id": "E_rh10_th5",
+     "rh": 10.0,
+     "thick": 5.0,
+     "L_z": 0.7036414866574431,
+     "pol_um3": 3533.5497515678107,
+     "peak_mK": 0.07367306062633361,
+     "t_peak_us": 46.51279983863231,
+     "l2_shape_vs_ref": 0.04969892517110416
+    },
+    {
+     "id": "E_rh10_th20",
+     "rh": 10.0,
+     "thick": 20.0,
+     "L_z": 0.3333333333333333,
+     "pol_um3": 6283.185307179586,
+     "peak_mK": 0.13334407196907705,
+     "t_peak_us": 50.884082450014304,
+     "l2_shape_vs_ref": 0.09307625081475618
+    },
+    {
+     "id": "E_rh14.1_th5",
+     "rh": 14.1,
+     "thick": 5.0,
+     "L_z": 0.7734336596637122,
+     "pol_um3": 9189.067751387009,
+     "peak_mK": 0.18343924574537596,
+     "t_peak_us": 46.51279983863231,
+     "l2_shape_vs_ref": 0.03449484754871145
+    }
+   ]
+  },
+  "120": {
+   "slope": 0.9715870608482978,
+   "scatter": 0.06820139960194554,
+   "shapes": [
+    {
+     "id": "S_axis_d120",
+     "rh": 10.0,
+     "thick": 10.0,
+     "L_z": 0.5272002825625699,
+     "pol_um3": 4429.772322506445,
+     "peak_mK": 0.030964903658059484,
+     "t_peak_us": 100.070296980597,
+     "l2_shape_vs_ref": 0.0
+    },
+    {
+     "id": "P4_rh7.1_th20",
+     "rh": 7.1,
+     "thick": 20.0,
+     "L_z": 0.2473998204576699,
+     "pol_um3": 2805.698430097244,
+     "peak_mK": 0.021008412261380727,
+     "t_peak_us": 107.87087244770382,
+     "l2_shape_vs_ref": 0.05371661284736712
+    },
+    {
+     "id": "P4_rh10_th2",
+     "rh": 10.0,
+     "thick": 2.0,
+     "L_z": 0.8608042765278006,
+     "pol_um3": 3009.280817181849,
+     "peak_mK": 0.01853100803828056,
+     "t_peak_us": 96.92167306218802,
+     "l2_shape_vs_ref": 0.04222005201157676
+    },
+    {
+     "id": "P4_rh10_th5",
+     "rh": 10.0,
+     "thick": 5.0,
+     "L_z": 0.7036414866574431,
+     "pol_um3": 3533.5497515678107,
+     "peak_mK": 0.02329670121525851,
+     "t_peak_us": 96.92167306218802,
+     "l2_shape_vs_ref": 0.02738107480076056
+    },
+    {
+     "id": "P4_rh10_th20",
+     "rh": 10.0,
+     "thick": 20.0,
+     "L_z": 0.3333333333333333,
+     "pol_um3": 6283.185307179586,
+     "peak_mK": 0.04495375316082573,
+     "t_peak_us": 107.87087244770382,
+     "l2_shape_vs_ref": 0.0575592965601805
+    },
+    {
+     "id": "P4_rh14.1_th5",
+     "rh": 14.1,
+     "thick": 5.0,
+     "L_z": 0.7734336596637122,
+     "pol_um3": 9189.067751387009,
+     "peak_mK": 0.05839825678322086,
+     "t_peak_us": 100.070296980597,
+     "l2_shape_vs_ref": 0.018653557327401524
+    }
+   ]
+  }
+ },
+ "A3": {
+  "library": {
+   "depths": [
+    10.0,
+    20.0,
+    30.0,
+    40.0,
+    50.0,
+    60.0,
+    70.0,
+    80.0,
+    85.0,
+    90.0,
+    100.0,
+    105.0,
+    110.0,
+    115.0,
+    120.0,
+    130.0,
+    140.0,
+    150.0,
+    160.0,
+    170.0,
+    180.0,
+    190.0,
+    200.0,
+    210.0,
+    220.0,
+    230.0,
+    240.0,
+    250.0,
+    260.0,
+    270.0,
+    280.0,
+    290.0,
+    300.0,
+    310.0,
+    320.0,
+    330.0,
+    340.0,
+    350.0,
+    360.0,
+    370.0,
+    380.0,
+    390.0,
+    400.0,
+    410.0,
+    420.0,
+    430.0,
+    440.0,
+    450.0,
+    460.0,
+    470.0,
+    480.0
+   ],
+   "peaks_mK": {
+    "10": 6.084990465581086,
+    "20": 1.2949686954470963,
+    "30": 0.5296252487596576,
+    "40": 0.2895399545082,
+    "50": 0.18499579658737275,
+    "60": 0.12973572768260055,
+    "70": 0.09580232170947056,
+    "80": 0.07324126244157014,
+    "85": 0.06469001147024755,
+    "90": 0.057461467122266185,
+    "100": 0.04601233735002097,
+    "105": 0.04144338964806593,
+    "110": 0.03747698485767614,
+    "115": 0.034009804153356527,
+    "120": 0.030964903658059484,
+    "130": 0.025895697319811006,
+    "140": 0.02189364784044301,
+    "150": 0.01868220209644278,
+    "160": 0.0160752263127506,
+    "170": 0.013929553688285523,
+    "180": 0.012144911011091608,
+    "190": 0.010654914603946963,
+    "200": 0.00939432925406436,
+    "210": 0.008321254313159443,
+    "220": 0.00739970647600785,
+    "230": 0.006610224545511301,
+    "240": 0.005920624630562088,
+    "250": 0.005319197100561723,
+    "260": 0.004793467155650433,
+    "270": 0.0043281962689434295,
+    "280": 0.003920121571354684,
+    "290": 0.003557029799594602,
+    "300": 0.00323403156698987,
+    "310": 0.002948288795323606,
+    "320": 0.002692341467991355,
+    "330": 0.0024652554202475585,
+    "340": 0.002262446400891349,
+    "350": 0.0020809673060284695,
+    "360": 0.0019195264258087263,
+    "370": 0.0017754111354406632,
+    "380": 0.0016465046996927413,
+    "390": 0.0015315139307858772,
+    "400": 0.0014285469092101266,
+    "410": 0.001336558796083409,
+    "420": 0.001249717342943768,
+    "430": 0.0011648286317722523,
+    "440": 0.0010813447488544625,
+    "450": 0.0009964271612261655,
+    "460": 0.000904967464521178,
+    "470": 0.0007958154810694396,
+    "480": 0.0006556541052304965
+   },
+   "radial_factors": {
+    "70": [
+     {
+      "r": 0.0,
+      "factor": 1.0,
+      "l2_shape_vs_axis": 0.0
+     },
+     {
+      "r": 10.0,
+      "factor": 1.0534639134417416,
+      "l2_shape_vs_axis": 0.011173965997745606
+     },
+     {
+      "r": 15.0,
+      "factor": 1.0612533082579791,
+      "l2_shape_vs_axis": 0.018463789293124266
+     },
+     {
+      "r": 20.0,
+      "factor": 1.037432400683973,
+      "l2_shape_vs_axis": 0.026329251230821627
+     },
+     {
+      "r": 25.0,
+      "factor": 1.0509136649986184,
+      "l2_shape_vs_axis": 0.03470586445203135
+     },
+     {
+      "r": 28.0,
+      "factor": 1.096550123783424,
+      "l2_shape_vs_axis": 0.041669948777454016
+     }
+    ],
+    "90": [
+     {
+      "r": 0.0,
+      "factor": 1.0,
+      "l2_shape_vs_axis": 0.0
+     },
+     {
+      "r": 10.0,
+      "factor": 1.057451797942297,
+      "l2_shape_vs_axis": 0.009289288115210695
+     },
+     {
+      "r": 15.0,
+      "factor": 1.0681411920838866,
+      "l2_shape_vs_axis": 0.013585103062704273
+     },
+     {
+      "r": 20.0,
+      "factor": 1.0473516896022588,
+      "l2_shape_vs_axis": 0.017722824693388907
+     },
+     {
+      "r": 25.0,
+      "factor": 1.0646208234187164,
+      "l2_shape_vs_axis": 0.02223645911115791
+     }
+    ],
+    "150": [
+     {
+      "r": 0.0,
+      "factor": 1.0,
+      "l2_shape_vs_axis": 0.0
+     },
+     {
+      "r": 10.0,
+      "factor": 1.0604541232521587,
+      "l2_shape_vs_axis": 0.006725377019403938
+     },
+     {
+      "r": 20.0,
+      "factor": 1.0530259109867919,
+      "l2_shape_vs_axis": 0.011116310824299635
+     },
+     {
+      "r": 28.0,
+      "factor": 1.1231274708702308,
+      "l2_shape_vs_axis": 0.016344271881597035
+     }
+    ]
+   },
+   "method": "depth: linear interpolation between neighbouring on-axis curves (10 um grid); r: peak factor f(depth, r) linear in r and in depth between 70/90/150 um, constant outside; curve shape assumed independent of r (checked: l2_shape_vs_axis)"
+  },
+  "predictions": [
+   {
+    "id": "F_seed1",
+    "depth_min_um": 130.54703734224617,
+    "n_voids": 10,
+    "peak_computed_mK": 0.04531371524763017,
+    "peak_predicted_mK": 0.0453176607785916,
+    "ratio_pred_over_computed": 1.0000870714515433,
+    "t_peak_computed_us": 266.5013301617761,
+    "t_peak_predicted_us": 256.34670333973963,
+    "l2_rel": 0.014638273637852615,
+    "computed": {
+     "noise_margin": 0.17463300026208325,
+     "ratio_margin": 0.4540474276738439,
+     "verdict": "불가(잡음+비율)"
+    },
+    "predicted": {
+     "noise_margin": 0.17464820581090343,
+     "ratio_margin": 0.4419278086987043,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "extrapolation_notes": [
+     "void 2: r 29.2 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 8: depth 481.9 outside library (10..480): nearest node used",
+     "void 9: r 29.4 beyond the measured radii (<= 28): linear extrapolation of the radial factor"
+    ],
+    "within_library": true
+   },
+   {
+    "id": "F_seed2",
+    "depth_min_um": 113.90829454183543,
+    "n_voids": 10,
+    "peak_computed_mK": 0.07275266875694797,
+    "peak_predicted_mK": 0.07552528174944867,
+    "ratio_pred_over_computed": 1.038110120767713,
+    "t_peak_computed_us": 140.4345332885885,
+    "t_peak_predicted_us": 135.7825817398907,
+    "l2_rel": 0.042938781811911554,
+    "computed": {
+     "noise_margin": 0.2805535271239012,
+     "ratio_margin": 0.4685556346413313,
+     "verdict": "불가(잡음+비율)"
+    },
+    "predicted": {
+     "noise_margin": 0.2912454559244009,
+     "ratio_margin": 0.47529907333906096,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "extrapolation_notes": [],
+    "within_library": true
+   },
+   {
+    "id": "F_seed3",
+    "depth_min_um": 70.62583507371119,
+    "n_voids": 10,
+    "peak_computed_mK": 0.0974898824210868,
+    "peak_predicted_mK": 0.09917810352404352,
+    "ratio_pred_over_computed": 1.0173168852093266,
+    "t_peak_computed_us": 49.44166155457344,
+    "t_peak_predicted_us": 48.4653743159264,
+    "l2_rel": 0.04871601949421881,
+    "computed": {
+     "noise_margin": 0.3759856182002884,
+     "ratio_margin": 0.2928677103960165,
+     "verdict": "불가(잡음+비율)"
+    },
+    "predicted": {
+     "noise_margin": 0.3824965179910205,
+     "ratio_margin": 0.2929436414500444,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "extrapolation_notes": [
+     "void 6: r 29.3 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 8: r 29.6 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 9: r 28.3 beyond the measured radii (<= 28): linear extrapolation of the radial factor"
+    ],
+    "within_library": true
+   },
+   {
+    "id": "F_seed4",
+    "depth_min_um": 126.02621728971113,
+    "n_voids": 10,
+    "peak_computed_mK": 0.051843613334767724,
+    "peak_predicted_mK": 0.05096276895849426,
+    "ratio_pred_over_computed": 0.983009587495655,
+    "t_peak_computed_us": 161.05368670818817,
+    "t_peak_predicted_us": 161.05368670818817,
+    "l2_rel": 0.019643391649604023,
+    "computed": {
+     "noise_margin": 0.19975829211236404,
+     "ratio_margin": 0.3668252061051435,
+     "verdict": "불가(잡음+비율)"
+    },
+    "predicted": {
+     "noise_margin": 0.19636431632821155,
+     "ratio_margin": 0.36059269453642573,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "extrapolation_notes": [
+     "void 1: depth 480.0 outside library (10..480): nearest node used",
+     "void 1: r 29.1 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 5: depth 483.3 outside library (10..480): nearest node used",
+     "void 8: r 29.1 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 10: r 29.4 beyond the measured radii (<= 28): linear extrapolation of the radial factor"
+    ],
+    "within_library": true
+   },
+   {
+    "id": "F_seed5",
+    "depth_min_um": 77.77723142148852,
+    "n_voids": 10,
+    "peak_computed_mK": 0.20117238943839766,
+    "peak_predicted_mK": 0.19947268421090655,
+    "ratio_pred_over_computed": 0.9915510014458939,
+    "t_peak_computed_us": 67.374366530713,
+    "t_peak_predicted_us": 65.24325392650879,
+    "l2_rel": 0.0329195626548838,
+    "computed": {
+     "noise_margin": 0.7754210281377891,
+     "ratio_margin": 0.7713587854508921,
+     "verdict": "불가(잡음+비율)"
+    },
+    "predicted": {
+     "noise_margin": 0.7688694969922295,
+     "ratio_margin": 0.7466099122604246,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "extrapolation_notes": [
+     "void 4: r 30.0 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 10: r 28.4 beyond the measured radii (<= 28): linear extrapolation of the radial factor"
+    ],
+    "within_library": true
+   },
+   {
+    "id": "F0_seed1",
+    "depth_min_um": 70.63821023262052,
+    "n_voids": 10,
+    "peak_computed_mK": 0.1023702818088168,
+    "peak_predicted_mK": 0.101345990718947,
+    "ratio_pred_over_computed": 0.9899942534906494,
+    "t_peak_computed_us": 52.32650334545517,
+    "t_peak_predicted_us": 50.884082450014304,
+    "l2_rel": 0.025281443187090337,
+    "computed": {
+     "noise_margin": 0.3945486769067488,
+     "ratio_margin": 0.3224203395516574,
+     "verdict": "불가(잡음+비율)"
+    },
+    "predicted": {
+     "noise_margin": 0.3906009228600201,
+     "ratio_margin": 0.31192173148435326,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "extrapolation_notes": [
+     "void 2: r 29.2 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 8: depth 480.6 outside library (10..480): nearest node used",
+     "void 9: r 29.4 beyond the measured radii (<= 28): linear extrapolation of the radial factor"
+    ],
+    "within_library": true
+   },
+   {
+    "id": "F0_seed2",
+    "depth_min_um": 51.22634363214134,
+    "n_voids": 10,
+    "peak_computed_mK": 0.24963299938463024,
+    "peak_predicted_mK": 0.2654014614686385,
+    "ratio_pred_over_computed": 1.0631665770265915,
+    "t_peak_computed_us": 41.63136364539709,
+    "t_peak_predicted_us": 39.64899475010924,
+    "l2_rel": 0.1290063522226169,
+    "computed": {
+     "noise_margin": 0.9627236183027004,
+     "ratio_margin": 0.6431977758218688,
+     "verdict": "불가(잡음+비율)"
+    },
+    "predicted": {
+     "noise_margin": 1.0235355738935366,
+     "ratio_margin": 0.6519999773130362,
+     "verdict": "불가(비율)"
+    },
+    "verdict_flips": false,
+    "extrapolation_notes": [
+     "void 10: depth 51.2 shallower than the radial-factor measurements (>= 70): factor of 70 um used"
+    ],
+    "within_library": false
+   },
+   {
+    "id": "F0_seed4",
+    "depth_min_um": 65.36392017132962,
+    "n_voids": 10,
+    "peak_computed_mK": 0.1454318154401335,
+    "peak_predicted_mK": 0.14472310717155676,
+    "ratio_pred_over_computed": 0.9951268691349832,
+    "t_peak_computed_us": 53.76892424089604,
+    "t_peak_predicted_us": 50.884082450014304,
+    "l2_rel": 0.07631620656567437,
+    "computed": {
+     "noise_margin": 0.5604039847810739,
+     "ratio_margin": 0.46829460572125936,
+     "verdict": "불가(잡음+비율)"
+    },
+    "predicted": {
+     "noise_margin": 0.5576730628259589,
+     "ratio_margin": 0.44543104710832654,
+     "verdict": "불가(잡음+비율)"
+    },
+    "verdict_flips": false,
+    "extrapolation_notes": [
+     "void 1: r 29.1 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 5: depth 482.2 outside library (10..480): nearest node used",
+     "void 8: r 29.1 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 8: depth 65.4 shallower than the radial-factor measurements (>= 70): factor of 70 um used",
+     "void 10: r 29.4 beyond the measured radii (<= 28): linear extrapolation of the radial factor"
+    ],
+    "within_library": false
+   },
+   {
+    "id": "F0_seed5",
+    "depth_min_um": 9.073436658403267,
+    "n_voids": 10,
+    "peak_computed_mK": 1.501315374753176,
+    "peak_predicted_mK": 8.260836173144867,
+    "ratio_pred_over_computed": 5.502398970971034,
+    "t_peak_computed_us": 28.151509547738595,
+    "t_peak_predicted_us": 27.458122613065235,
+    "l2_rel": 5.382063502014011,
+    "computed": {
+     "noise_margin": 5.806965972537839,
+     "ratio_margin": 1.5951149281969392,
+     "verdict": "가능"
+    },
+    "predicted": {
+     "noise_margin": 31.952243591756005,
+     "ratio_margin": 3.195224359175601,
+     "verdict": "가능"
+    },
+    "verdict_flips": false,
+    "extrapolation_notes": [
+     "void 3: depth 23.9 shallower than the radial-factor measurements (>= 70): factor of 70 um used",
+     "void 4: r 30.0 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 8: depth 31.5 shallower than the radial-factor measurements (>= 70): factor of 70 um used",
+     "void 10: depth 9.1 outside library (10..480): nearest node used",
+     "void 10: r 28.4 beyond the measured radii (<= 28): linear extrapolation of the radial factor",
+     "void 10: depth 9.1 shallower than the radial-factor measurements (>= 70): factor of 70 um used"
+    ],
+    "within_library": false
+   }
+  ],
+  "excluded": [
+   "F0_seed3: a void breaks the surface (top at 0.7 um); the signal is that of a surface hole, outside the library"
+  ]
+ },
+ "runs": [
+  {
+   "id": "P1_g05",
+   "series": "P1",
+   "dim": "2D",
+   "n_unknowns": 4970,
+   "wall_min": 0.00738603671391805,
+   "energy_error": 1.001807630758677e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.14526854721452764,
+   "t_peak_us": 52.32650334545517,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P1_g10",
+   "series": "P1",
+   "dim": "2D",
+   "n_unknowns": 5075,
+   "wall_min": 0.007432277997334798,
+   "energy_error": 1.1819491863813383e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.14171453221933916,
+   "t_peak_us": 53.76892424089604,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P1_g20",
+   "series": "P1",
+   "dim": "2D",
+   "n_unknowns": 5215,
+   "wall_min": 0.007231485843658447,
+   "energy_error": -3.4741585727227516e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.1303068796687512,
+   "t_peak_us": 55.21134513633691,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P1_g35",
+   "series": "P1",
+   "dim": "2D",
+   "n_unknowns": 5320,
+   "wall_min": 0.007767864068349202,
+   "energy_error": 1.4043688622011547e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.1143569702435343,
+   "t_peak_us": 55.21134513633691,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P1_g50",
+   "series": "P1",
+   "dim": "2D",
+   "n_unknowns": 5390,
+   "wall_min": 0.007739595572153727,
+   "energy_error": 2.2977239237584334e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.10412437399054397,
+   "t_peak_us": 52.32650334545517,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P1_g80",
+   "series": "P1",
+   "dim": "2D",
+   "n_unknowns": 5565,
+   "wall_min": 0.007808574040730794,
+   "energy_error": 1.4687051320663908e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0970497213188537,
+   "t_peak_us": 48.4653743159264,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P2_s22",
+   "series": "P2",
+   "dim": "3D",
+   "n_unknowns": 298452,
+   "wall_min": 10.545164267222086,
+   "energy_error": -6.6174449004242885e-15,
+   "mean_iterations": 9.222910216718267,
+   "peak_mK": 0.21175723594524243,
+   "t_peak_us": 49.44166155457344,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P2_s25",
+   "series": "P2",
+   "dim": "3D",
+   "n_unknowns": 305235,
+   "wall_min": 10.740100411574046,
+   "energy_error": 9.291995547679105e-13,
+   "mean_iterations": 9.173374613003096,
+   "peak_mK": 0.20746302442375963,
+   "t_peak_us": 49.44166155457344,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P2_s30",
+   "series": "P2",
+   "dim": "3D",
+   "n_unknowns": 318801,
+   "wall_min": 11.31950436035792,
+   "energy_error": 8.87105252484656e-13,
+   "mean_iterations": 9.452012383900929,
+   "peak_mK": 0.2038717684627045,
+   "t_peak_us": 49.44166155457344,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P2_s35",
+   "series": "P2",
+   "dim": "3D",
+   "n_unknowns": 325584,
+   "wall_min": 11.376802941163382,
+   "energy_error": 4.81419116505867e-13,
+   "mean_iterations": 9.352941176470589,
+   "peak_mK": 0.20400723974489665,
+   "t_peak_us": 49.44166155457344,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P2_s42",
+   "series": "P2",
+   "dim": "3D",
+   "n_unknowns": 352716,
+   "wall_min": 12.463325564066569,
+   "energy_error": 5.007199974654377e-13,
+   "mean_iterations": 9.609907120743035,
+   "peak_mK": 0.2032066780088826,
+   "t_peak_us": 49.44166155457344,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P2_s50",
+   "series": "P2",
+   "dim": "3D",
+   "n_unknowns": 366282,
+   "wall_min": 15.045945000648498,
+   "energy_error": -1.053092828736965e-12,
+   "mean_iterations": 8.758513931888546,
+   "peak_mK": 0.20261854876935104,
+   "t_peak_us": 49.44166155457344,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P3_r10",
+   "series": "P3",
+   "dim": "3D",
+   "n_unknowns": 149640,
+   "wall_min": 9.890168106555938,
+   "energy_error": 3.757973431785393e-12,
+   "mean_iterations": 5.30030959752322,
+   "peak_mK": 0.14647309740212222,
+   "t_peak_us": 55.21134513633691,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P3_r15",
+   "series": "P3",
+   "dim": "3D",
+   "n_unknowns": 201840,
+   "wall_min": 7.352921549479166,
+   "energy_error": -2.6819033638108437e-13,
+   "mean_iterations": 8.14860681114551,
+   "peak_mK": 0.1487073708403841,
+   "t_peak_us": 55.21134513633691,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P3_r20",
+   "series": "P3",
+   "dim": "3D",
+   "n_unknowns": 258825,
+   "wall_min": 8.933825051784515,
+   "energy_error": -1.4387428121005804e-12,
+   "mean_iterations": 8.356037151702786,
+   "peak_mK": 0.14885539741271714,
+   "t_peak_us": 55.21134513633691,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P3_r25",
+   "series": "P3",
+   "dim": "3D",
+   "n_unknowns": 301600,
+   "wall_min": 10.756813204288482,
+   "energy_error": -6.564137705393092e-13,
+   "mean_iterations": 8.76780185758514,
+   "peak_mK": 0.15049483664597574,
+   "t_peak_us": 55.21134513633691,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P4_rh10_th2",
+   "series": "P4",
+   "dim": "2D",
+   "n_unknowns": 5565,
+   "wall_min": 0.0077525893847147625,
+   "energy_error": -4.816029344197677e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.01853100803828056,
+   "t_peak_us": 96.92167306218802,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P4_rh10_th20",
+   "series": "P4",
+   "dim": "2D",
+   "n_unknowns": 4305,
+   "wall_min": 0.006286760171254476,
+   "energy_error": -2.4153673886548655e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.04495375316082573,
+   "t_peak_us": 107.87087244770382,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P4_rh10_th5",
+   "series": "P4",
+   "dim": "2D",
+   "n_unknowns": 5075,
+   "wall_min": 0.007191141446431478,
+   "energy_error": 3.1837262687596857e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.02329670121525851,
+   "t_peak_us": 96.92167306218802,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P4_rh14.1_th5",
+   "series": "P4",
+   "dim": "2D",
+   "n_unknowns": 4785,
+   "wall_min": 0.006956855456034343,
+   "energy_error": 3.253577076041942e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.05839825678322086,
+   "t_peak_us": 100.070296980597,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "P4_rh7.1_th20",
+   "series": "P4",
+   "dim": "2D",
+   "n_unknowns": 4797,
+   "wall_min": 0.007387908299763998,
+   "energy_error": 3.411660481996522e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.021008412261380727,
+   "t_peak_us": 107.87087244770382,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "R_d070_axis",
+   "series": "R",
+   "dim": "2D",
+   "n_unknowns": 4655,
+   "wall_min": 0.07788573503494263,
+   "energy_error": 0.0,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.09580232170947056,
+   "t_peak_us": 47.48908707727935,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "R_d070_r25",
+   "series": "R",
+   "dim": "3D",
+   "n_unknowns": 135660,
+   "wall_min": 3.089420505364736,
+   "energy_error": 4.687356804467203e-14,
+   "mean_iterations": 8.371517027863778,
+   "peak_mK": 0.10067996902307641,
+   "t_peak_us": 48.4653743159264,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d010",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4235,
+   "wall_min": 0.0063321431477864586,
+   "energy_error": -1.1378328870451762e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 6.084990465581086,
+   "t_peak_us": 27.458122613065235,
+   "verdict": "가능"
+  },
+  {
+   "id": "S_axis_d020",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4340,
+   "wall_min": 0.006478408972422282,
+   "energy_error": -6.396863403743479e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 1.2949686954470963,
+   "t_peak_us": 27.73547738693458,
+   "verdict": "불가(비율)"
+  },
+  {
+   "id": "S_axis_d030",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4375,
+   "wall_min": 0.006670403480529785,
+   "energy_error": 2.134125980386833e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.5296252487596576,
+   "t_peak_us": 28.706219095477284,
+   "verdict": "불가(비율)"
+  },
+  {
+   "id": "S_axis_d040",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4445,
+   "wall_min": 0.007086499532063802,
+   "energy_error": 1.3234889800848577e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.2895399545082,
+   "t_peak_us": 30.648051721456792,
+   "verdict": "불가(비율)"
+  },
+  {
+   "id": "S_axis_d050",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4480,
+   "wall_min": 0.006816697120666504,
+   "energy_error": -7.352716556026987e-16,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.18499579658737275,
+   "t_peak_us": 35.003301292904034,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d060",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4585,
+   "wall_min": 0.009294156233469646,
+   "energy_error": 3.930026999196425e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.12973572768260055,
+   "t_peak_us": 40.97057401363447,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d070",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4655,
+   "wall_min": 0.007920777797698975,
+   "energy_error": 0.0,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.09580232170947056,
+   "t_peak_us": 47.48908707727935,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d080",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007569130261739095,
+   "energy_error": 1.0422475718168255e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.07324126244157014,
+   "t_peak_us": 56.65376603177777,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d085",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007516924540201823,
+   "energy_error": 9.65044047978542e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.06469001147024755,
+   "t_peak_us": 60.98102871810037,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d090",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006734824180603028,
+   "energy_error": -5.2020469633890934e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.057461467122266185,
+   "t_peak_us": 65.24325392650879,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d100",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4725,
+   "wall_min": 0.007004749774932861,
+   "energy_error": -9.246041069203937e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.04601233735002097,
+   "t_peak_us": 75.89881694752985,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d105",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.0066803614298502605,
+   "energy_error": 1.648846687689052e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.04144338964806593,
+   "t_peak_us": 81.17855347014304,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d110",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.0068497816721598305,
+   "energy_error": 9.981312724806635e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.03747698485767614,
+   "t_peak_us": 87.47580130696103,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d115",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.0067682027816772464,
+   "energy_error": 1.1176129165161021e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.034009804153356527,
+   "t_peak_us": 93.77304914377902,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d120",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006824326515197754,
+   "energy_error": 4.779265761417542e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.030964903658059484,
+   "t_peak_us": 100.070296980597,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d130",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007012089093526204,
+   "energy_error": 1.8345027807287333e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.025895697319811006,
+   "t_peak_us": 112.52282399640161,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d140",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4725,
+   "wall_min": 0.006845986843109131,
+   "energy_error": 1.5164977896805662e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.02189364784044301,
+   "t_peak_us": 131.13063019119286,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d150",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006979636351267497,
+   "energy_error": 2.1672132048889545e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.01868220209644278,
+   "t_peak_us": 147.30758442845507,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d160",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006847894191741944,
+   "energy_error": 4.3013391852757875e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0160752263127506,
+   "t_peak_us": 161.05368670818817,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d170",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006777330239613851,
+   "energy_error": 1.0477621092338457e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.013929553688285523,
+   "t_peak_us": 181.67284012778782,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d180",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4725,
+   "wall_min": 0.006674051284790039,
+   "energy_error": 3.0881409535313345e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.012144911011091608,
+   "t_peak_us": 195.41894240752094,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d190",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007253781954447428,
+   "energy_error": 2.185594996279022e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.010654914603946963,
+   "t_peak_us": 215.72819605159384,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d200",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.00897062619527181,
+   "energy_error": -6.157900115672602e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.00939432925406436,
+   "t_peak_us": 236.03744969566674,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d210",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006703607241312663,
+   "energy_error": 1.4797342069004313e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.008321254313159443,
+   "t_peak_us": 266.5013301617761,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d220",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007069313526153564,
+   "energy_error": -1.9521462456251653e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.00739970647600785,
+   "t_peak_us": 291.65896566167675,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d230",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4725,
+   "wall_min": 0.006746327877044678,
+   "energy_error": -7.867406714948876e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.006610224545511301,
+   "t_peak_us": 306.6619743395409,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d240",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006955293814341227,
+   "energy_error": 2.59918530255554e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.005920624630562088,
+   "t_peak_us": 336.6679916952693,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d250",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006812862555185954,
+   "energy_error": 2.3252966108435346e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.005319197100561723,
+   "t_peak_us": 351.67100037313344,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d260",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007158029079437256,
+   "energy_error": -1.540394118487654e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.004793467155650433,
+   "t_peak_us": 381.6770177288618,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d270",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4725,
+   "wall_min": 0.007026668389638265,
+   "energy_error": 2.9925556383029837e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0043281962689434295,
+   "t_peak_us": 418.846303251051,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d280",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006741738319396973,
+   "energy_error": -9.779113019515893e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.003920121571354684,
+   "t_peak_us": 441.01258009537594,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d290",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006939995288848877,
+   "energy_error": -1.1359947079061696e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.003557029799594602,
+   "t_peak_us": 463.1788569397009,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d300",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007431979974110921,
+   "energy_error": 1.7481083611954162e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.00323403156698987,
+   "t_peak_us": 507.51141062835086,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d310",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4725,
+   "wall_min": 0.007179160912831624,
+   "energy_error": 1.7885483022535647e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.002948288795323606,
+   "t_peak_us": 529.6776874726759,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d320",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007293148835500082,
+   "energy_error": 1.0109985264537108e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.002692341467991355,
+   "t_peak_us": 574.0102411613259,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d330",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.0074656168619791664,
+   "energy_error": 9.135750320863532e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0024652554202475585,
+   "t_peak_us": 606.7599275535093,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d340",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007025718688964844,
+   "energy_error": -1.6653902999401127e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.002262446400891349,
+   "t_peak_us": 639.5096139456928,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d350",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006771079699198405,
+   "energy_error": 2.119420547274779e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0020809673060284695,
+   "t_peak_us": 672.2593003378762,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d360",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.009214131037394206,
+   "energy_error": -7.77549775799854e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0019195264258087263,
+   "t_peak_us": 737.7586731222431,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d370",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007778982321421306,
+   "energy_error": 8.804878075842317e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0017754111354406632,
+   "t_peak_us": 770.5083595144265,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d380",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007539614041646322,
+   "energy_error": -2.578965332026466e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0016465046996927413,
+   "t_peak_us": 836.0077322987934,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d390",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007484217484792073,
+   "energy_error": 1.3106217261118104e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0015315139307858772,
+   "t_peak_us": 884.3939347413093,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d400",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4725,
+   "wall_min": 0.00795364777247111,
+   "energy_error": 3.086302774392328e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0014285469092101266,
+   "t_peak_us": 932.7801371838253,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d410",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.009083024660746257,
+   "energy_error": -2.5734507946094456e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.001336558796083409,
+   "t_peak_us": 1000.0,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d420",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.007581754525502523,
+   "energy_error": 6.617444900424288e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.001249717342943768,
+   "t_peak_us": 1000.0,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d430",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006779785950978597,
+   "energy_error": 2.3363256856775753e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0011648286317722523,
+   "t_peak_us": 1000.0,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d440",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4725,
+   "wall_min": 0.0067959785461425785,
+   "energy_error": 9.025459572523126e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0010813447488544625,
+   "t_peak_us": 1000.0,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d450",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.0067566633224487305,
+   "energy_error": 2.242578549588231e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0009964271612261655,
+   "t_peak_us": 1000.0,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d460",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4690,
+   "wall_min": 0.006805594762166341,
+   "energy_error": 3.6781964571525006e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.000904967464521178,
+   "t_peak_us": 1000.0,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d470",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4620,
+   "wall_min": 0.006725092728932698,
+   "energy_error": 9.025459572523126e-14,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0007958154810694396,
+   "t_peak_us": 1000.0,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_axis_d480",
+   "series": "P0",
+   "dim": "2D",
+   "n_unknowns": 4515,
+   "wall_min": 0.007358030478159586,
+   "energy_error": -1.7389174655003826e-13,
+   "mean_iterations": 0.0,
+   "peak_mK": 0.0006556541052304965,
+   "t_peak_us": 1000.0,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_d070_r10",
+   "series": "P0p",
+   "dim": "3D",
+   "n_unknowns": 68628,
+   "wall_min": 14.688093932469686,
+   "energy_error": 1.4277137372665401e-12,
+   "mean_iterations": 7.489164086687307,
+   "peak_mK": 0.10092428874486359,
+   "t_peak_us": 48.4653743159264,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_d070_r15",
+   "series": "P0p",
+   "dim": "3D",
+   "n_unknowns": 102144,
+   "wall_min": 3.8933242479960124,
+   "energy_error": 5.705708047476942e-13,
+   "mean_iterations": 8.157894736842104,
+   "peak_mK": 0.10167053085297084,
+   "t_peak_us": 48.4653743159264,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_d070_r20",
+   "series": "P0p",
+   "dim": "3D",
+   "n_unknowns": 122094,
+   "wall_min": 4.6878862380981445,
+   "energy_error": 4.959407317040203e-13,
+   "mean_iterations": 8.253869969040247,
+   "peak_mK": 0.09938843260215435,
+   "t_peak_us": 48.4653743159264,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_d070_r28",
+   "series": "P0p",
+   "dim": "3D",
+   "n_unknowns": 142443,
+   "wall_min": 5.536022202173869,
+   "energy_error": 9.705585853955623e-14,
+   "mean_iterations": 8.455108359133128,
+   "peak_mK": 0.10505204772925936,
+   "t_peak_us": 49.44166155457344,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_d090_r10",
+   "series": "P0p",
+   "dim": "3D",
+   "n_unknowns": 69144,
+   "wall_min": 16.656874191761016,
+   "energy_error": 1.871266363508868e-12,
+   "mean_iterations": 7.396284829721362,
+   "peak_mK": 0.06076273172084257,
+   "t_peak_us": 65.24325392650879,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_d090_r15",
+   "series": "P0p",
+   "dim": "3D",
+   "n_unknowns": 102912,
+   "wall_min": 4.037498374780019,
+   "energy_error": 3.477834931000765e-13,
+   "mean_iterations": 8.15170278637771,
+   "peak_mK": 0.06137695999086645,
+   "t_peak_us": 65.24325392650879,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_d090_r20",
+   "series": "P0p",
+   "dim": "3D",
+   "n_unknowns": 123012,
+   "wall_min": 4.6418911139170325,
+   "energy_error": 6.06782933786127e-13,
+   "mean_iterations": 8.278637770897832,
+   "peak_mK": 0.06018236467753013,
+   "t_peak_us": 67.374366530713,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_d150_r10",
+   "series": "P0p",
+   "dim": "3D",
+   "n_unknowns": 69144,
+   "wall_min": 17.627195823192597,
+   "energy_error": -1.6657579357679137e-12,
+   "mean_iterations": 7.0588235294117645,
+   "peak_mK": 0.01981161824460287,
+   "t_peak_us": 147.30758442845507,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_d150_r20",
+   "series": "P0p",
+   "dim": "3D",
+   "n_unknowns": 123012,
+   "wall_min": 4.678036725521087,
+   "energy_error": 1.6727430164961393e-14,
+   "mean_iterations": 8.235294117647058,
+   "peak_mK": 0.01967284288184601,
+   "t_peak_us": 147.30758442845507,
+   "verdict": "불가(잡음+비율)"
+  },
+  {
+   "id": "S_d150_r28",
+   "series": "P0p",
+   "dim": "3D",
+   "n_unknowns": 143514,
+   "wall_min": 5.583428239822387,
+   "energy_error": -1.6591404908674894e-12,
+   "mean_iterations": 8.337461300309597,
+   "peak_mK": 0.020982494390864304,
+   "t_peak_us": 147.30758442845507,
+   "verdict": "불가(잡음+비율)"
+  }
+ ],
+ "regression": [
+  {
+   "id": "R_d070_axis",
+   "ref": "A_d070_axis",
+   "same_time_axis": true,
+   "rel_err_dT_diff": 0.0,
+   "rel_err_dT_base": 0.0,
+   "passed": true
+  },
+  {
+   "id": "R_d070_r25",
+   "ref": "A_d070_r25",
+   "same_time_axis": true,
+   "rel_err_dT_diff": 0.0,
+   "rel_err_dT_base": 0.0,
+   "passed": true
+  }
+ ],
+ "geometry": {
+  "R_d070_axis": [],
+  "R_d070_r25": [],
+  "S_axis_d010": [],
+  "S_axis_d020": [],
+  "S_axis_d030": [],
+  "S_axis_d040": [],
+  "S_axis_d050": [],
+  "S_axis_d060": [],
+  "S_axis_d070": [],
+  "S_axis_d080": [],
+  "S_axis_d085": [],
+  "S_axis_d090": [],
+  "S_axis_d100": [],
+  "S_axis_d105": [],
+  "S_axis_d110": [],
+  "S_axis_d115": [],
+  "S_axis_d120": [],
+  "S_axis_d130": [],
+  "S_axis_d140": [],
+  "S_axis_d150": [],
+  "S_axis_d160": [],
+  "S_axis_d170": [],
+  "S_axis_d180": [],
+  "S_axis_d190": [],
+  "S_axis_d200": [],
+  "S_axis_d210": [],
+  "S_axis_d220": [],
+  "S_axis_d230": [],
+  "S_axis_d240": [],
+  "S_axis_d250": [],
+  "S_axis_d260": [],
+  "S_axis_d270": [],
+  "S_axis_d280": [],
+  "S_axis_d290": [],
+  "S_axis_d300": [],
+  "S_axis_d310": [],
+  "S_axis_d320": [],
+  "S_axis_d330": [],
+  "S_axis_d340": [],
+  "S_axis_d350": [],
+  "S_axis_d360": [],
+  "S_axis_d370": [],
+  "S_axis_d380": [],
+  "S_axis_d390": [],
+  "S_axis_d400": [],
+  "S_axis_d410": [],
+  "S_axis_d420": [],
+  "S_axis_d430": [],
+  "S_axis_d440": [],
+  "S_axis_d450": [],
+  "S_axis_d460": [],
+  "S_axis_d470": [],
+  "S_axis_d480": [],
+  "S_d070_r10": [],
+  "S_d070_r15": [],
+  "S_d070_r20": [],
+  "S_d070_r28": [],
+  "S_d090_r10": [],
+  "S_d090_r15": [],
+  "S_d090_r20": [],
+  "S_d150_r10": [],
+  "S_d150_r20": [],
+  "S_d150_r28": [],
+  "P1_g05": [],
+  "P1_g10": [],
+  "P1_g20": [],
+  "P1_g35": [],
+  "P1_g50": [],
+  "P1_g80": [],
+  "P2_s22": [],
+  "P2_s25": [],
+  "P2_s30": [],
+  "P2_s35": [],
+  "P2_s42": [],
+  "P2_s50": [],
+  "P3_r10": [],
+  "P3_r15": [],
+  "P3_r20": [],
+  "P3_r25": [],
+  "P4_rh7.1_th20": [],
+  "P4_rh10_th2": [],
+  "P4_rh10_th5": [],
+  "P4_rh10_th20": [],
+  "P4_rh14.1_th5": []
+ }
+}

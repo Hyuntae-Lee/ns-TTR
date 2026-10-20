@@ -1,0 +1,88 @@
+{
+ "id": "D_N6",
+ "series": "D",
+ "label": "70 μm 에 6개 (축 + r = 25 μm 고리 5개)",
+ "n_voids": 6,
+ "depth_min_um": 70.0,
+ "depth_max_um": 70.0,
+ "blocked_area_frac": 0.375,
+ "void_volume_um3": 12566.370614359173,
+ "tau_p_s": 2.758620689655173e-05,
+ "energy_J": 9.000000000000001e-08,
+ "window_s": 0.001,
+ "dT_base_max_K": 0.1297209733391469,
+ "t_base_peak_s": 2.7458122613065236e-05,
+ "void_minus_base_K": 0.0006604178023508211,
+ "t_peak_s": 4.944166155457344e-05,
+ "ratio": 0.039678691496566526,
+ "base_at_peak_K": 0.016644142673101214,
+ "dRR_diff": -9.906267035262316e-08,
+ "contrast_max": 0.044756066080782454,
+ "t_contrast_max_s": 6.950547913491721e-05,
+ "dT_at_contrast_max_K": 0.000570272466006827,
+ "peak_at_window_end": false,
+ "is_3d": true,
+ "full_circle": true,
+ "n_unknowns": 414960,
+ "n_theta": 60,
+ "void_cells": 8,
+ "n_steps": 323,
+ "solver": "구조 전처리 CG",
+ "mean_iterations": 9.944272445820433,
+ "energy_error": 2.3602220144846625e-13,
+ "wall_s": 873.2816269397736,
+ "scale": 77.08853659196392,
+ "scaled_void_minus_base_K": 0.05091064192250567,
+ "scaled_dRR_diff": 7.63659628837585e-06,
+ "noise_margin": 2.545532096125283,
+ "ratio_margin": 1.9839345748283264,
+ "noise_ok": true,
+ "ratio_ok": true,
+ "detectable": true,
+ "limiting": "",
+ "voids": [
+  {
+   "depth": 70.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 0.0,
+   "theta": 0.0
+  },
+  {
+   "depth": 70.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 0.0
+  },
+  {
+   "depth": 70.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 72.0
+  },
+  {
+   "depth": 70.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 144.0
+  },
+  {
+   "depth": 70.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 216.0
+  },
+  {
+   "depth": 70.0,
+   "rh": 10.0,
+   "thick": 10.0,
+   "rc": 25.0,
+   "theta": 288.0
+  }
+ ],
+ "baseline_grid_fixed": true
+}

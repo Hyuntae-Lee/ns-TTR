@@ -1,0 +1,18 @@
+[
+ {
+  "id": "R_d070_axis",
+  "ref": "A_d070_axis",
+  "same_time_axis": true,
+  "rel_err_dT_diff": 0.0,
+  "rel_err_dT_base": 0.0,
+  "passed": true
+ },
+ {
+  "id": "R_d070_r25",
+  "ref": "A_d070_r25",
+  "same_time_axis": true,
+  "rel_err_dT_diff": 0.0,
+  "rel_err_dT_base": 0.0,
+  "passed": true
+ }
+]

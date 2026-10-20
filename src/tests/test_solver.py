@@ -406,7 +406,8 @@ def test_stacked_on_axis_voids_stay_2d():
                                           numerics=Numerics(dz=p.dz, n_snapshots=4))
     cab = mk(va, [vb])
     assert not needs_3d(cab) and len(cab.voids) == 2 and cab.void_depth_min == va.depth
-    assert baseline_config(cab).voids == [] and baseline_config(cab).extra_voids == ()
+    assert baseline_config(cab).voids == [] and baseline_config(cab).extra_voids == cab.extra_voids
+    assert build_grid(baseline_config(cab)).n_cells == build_grid(cab).n_cells      # same grid as the void run
     _, ra, sa = run_pair(mk(va))
     _, rb, sb = run_pair(mk(vb))
     _, rab, sab = run_pair(cab)
@@ -430,16 +431,19 @@ def test_random_voids_generator():
 
 
 def test_random_arrangement_runs_on_the_full_circle():
-    from ttr_sim import random_voids
     from ttr_sim.solver3d import full_circle, needs_3d
     from ttr_sim.validation import run_pair
     c = _cfg3d(0.0)
-    vs = random_voids(2, 8e-6, 10e-6, c.geometry, seed=7, template=c.void)
-    c = replace(c, void=vs[0], extra_voids=tuple(vs[1:]))
+    # two off-axis voids at different azimuths, shallow enough to respond inside the short test window (the
+    # random generator is covered by test_random_voids_generator; random depths of ~400 um give no signal here)
+    va = replace(c.void, depth=20e-6, r_center=15e-6, theta=0.0)
+    vb = replace(c.void, depth=30e-6, r_center=20e-6, theta=2.0)
+    c = replace(c, void=va, extra_voids=(vb,))
     assert needs_3d(c) and full_circle(c)
     base, r, sig = run_pair(c)
     assert r.is_3d and r.diagnostics["full_circle"] and abs(r.energy_error) < 1e-9
     assert sig["peak_dT"] > 0
+    assert abs(sig["dT"][1]) < 1e-9 * base.dT_probe.max()        # same grid as the baseline: no offset at t ~ 0
 
 
 def test_fit_resolution_lowers_void_cells_until_the_unknowns_fit():

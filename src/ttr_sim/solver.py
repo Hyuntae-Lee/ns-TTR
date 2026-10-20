@@ -903,8 +903,11 @@ def run_simulation(
 
 def baseline_config(cfg: SimConfig) -> SimConfig:
     """Same configuration without any void (reference for the void signal).  The primary void is kept
-    (disabled) so the grid zones, and hence the grid, are identical."""
-    return replace(cfg, void=replace(cfg.void, enabled=False), extra_voids=())
+    (disabled) and the extra voids are kept too: `voids` is empty once the primary void is disabled, while the
+    grid zones (built from void and extra_voids regardless of `enabled`) stay identical.  A baseline on a
+    different grid would differ from the void run by a discretisation offset present from t = 0, which for
+    many small voids is as large as the void signal itself."""
+    return replace(cfg, void=replace(cfg.void, enabled=False))
 
 
 def random_voids(n: int, r_half: float, thickness: float, geometry: Geometry, seed: int = 0, template: Optional[VoidSpec] = None) -> list:
