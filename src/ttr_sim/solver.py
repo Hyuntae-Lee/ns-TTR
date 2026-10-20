@@ -15,6 +15,8 @@ Discretisation
 * All other boundaries are adiabatic (axis by symmetry, back face z = L, outer silica).
   Therefore the discrete scheme is exactly conservative and the energy balance is an
   end-to-end check of assembly + linear solve.
+* CW (transmission) mode: Laser(mode="cw", power=...) keeps the source on for all t >= 0; the far-face
+  temperature (z = L) is reconstructed and probe-weighted like the pump face (T_far, T_probe_far).
 * The linear system is factorised once (SuperLU) and reused for every step.
 
 The material map is produced from a function of cell-centre coordinates, and the assembly
@@ -43,6 +45,8 @@ class Geometry:
     R_cu: float = 40e-6          # copper cylinder radius, m
     L: float = 500e-6            # copper cylinder length, m
     homogeneous_copper: bool = False   # validation mode: replace silica by copper (semi-infinite analogue)
+    R_out: Optional[float] = None      # outer radius of the domain, m (None: automatic shell that grows with the window;
+                                       # R_out <= R_cu: no shell at all, i.e. an adiabatic rod side)
 
 
 @dataclass
@@ -123,6 +127,20 @@ class Laser:
     reflectivity: float = 0.6
     probe_w: float = 5e-6        # probe 1/e^2 radius for the thermoreflectance signal (<=0: centre cell), m
     c_tr: float = -1.5e-4        # thermoreflectance coefficient (dR/dT)/R at the 632.8 nm probe, 1/K (see materials.COPPER_C_TR_PROBE)
+    # CW (transmission) mode.  mode == "cw": the pump is switched on at t = 0 and stays on (f(t) = 1 for t >= 0),
+    # `power` is the incident power and I0 = power / beam_area; `energy` is ignored and `tau_p` is no longer a
+    # pulse width: it only sets the surface-layer refinement of the grid (10 sqrt(alpha tau_p)), as for a pulse.
+    mode: str = "pulse"          # "pulse": energy / tau_p pulse (default, unchanged) | "cw": continuous wave step
+    power: float = 0.0           # incident CW power, W (mode == "cw")
+    probe_w_far: Optional[float] = None   # probe 1/e^2 radius on the far face z = L, m (None: same as probe_w)
+
+    @property
+    def is_cw(self) -> bool:
+        return self.mode == "cw"
+
+    @property
+    def probe_w_far_eff(self) -> float:
+        return self.probe_w if self.probe_w_far is None else self.probe_w_far
 
     @property
     def beam_area(self) -> float:
@@ -131,13 +149,16 @@ class Laser:
 
     @property
     def I0(self) -> float:
-        """Peak incident intensity (W/m^2); defined so that the incident fluence integrates to `energy`."""
+        """Peak incident intensity (W/m^2); defined so that the incident fluence integrates to `energy`
+        (pulse) or so that the incident power integrates to `power` (CW)."""
+        if self.is_cw:
+            return self.power / self.beam_area
         return self.energy / (self.beam_area * self.tau_p)
 
     @property
     def t_center(self) -> float:
-        """Centre of the Gaussian pulse (0 for square)."""
-        return 1.5 * self.tau_p if self.profile == "gaussian" else 0.0
+        """Centre of the Gaussian pulse (0 for square and CW)."""
+        return 1.5 * self.tau_p if (self.profile == "gaussian" and not self.is_cw) else 0.0
 
     @property
     def sigma(self) -> float:
@@ -153,8 +174,11 @@ class Laser:
 
     def f(self, t):
         """Temporal profile normalised so that the integral of f dt over t >= 0 equals tau_p (same fluence for
-        both shapes).  The Gaussian is zero for t < 0 and renormalised for the truncated tail."""
+        both shapes).  The Gaussian is zero for t < 0 and renormalised for the truncated tail.
+        CW: unit step, 1 for t >= 0."""
         t = np.asarray(t, dtype=float)
+        if self.is_cw:
+            return (t >= 0.0).astype(float)
         if self.profile == "square":
             return ((t >= 0.0) & (t < self.tau_p)).astype(float)
         s = self.sigma
@@ -166,6 +190,8 @@ class Laser:
         so a square pulse edge that falls inside a step deposits exactly the right energy)."""
         t0 = np.asarray(t0, dtype=float)
         t1 = np.asarray(t1, dtype=float)
+        if self.is_cw:
+            return np.clip(t1 - np.maximum(t0, 0.0), 0.0, None) / (t1 - t0)
         if self.profile == "square":
             overlap = np.clip(np.minimum(t1, self.tau_p) - np.maximum(t0, 0.0), 0.0, None)
             return overlap / (t1 - t0)
@@ -182,8 +208,18 @@ class Laser:
 
     @property
     def pulse_end(self) -> float:
-        """Time after which essentially no more energy is deposited."""
+        """Time after which essentially no more energy is deposited.  CW: 0 (the source never ends; the
+        time step may start growing immediately, nothing in the source limits it)."""
+        if self.is_cw:
+            return 0.0
         return self.tau_p if self.profile == "square" else self.t_center + 3.0 * self.sigma
+
+    @property
+    def discontinuities(self) -> tuple:
+        """Instants at which f(t) jumps (the time integrator damps the Crank-Nicolson ringing there)."""
+        if self.is_cw:
+            return (0.0,)
+        return (0.0, self.tau_p) if self.profile == "square" else ()
 
 
 @dataclass
@@ -200,6 +236,8 @@ class Numerics:
     T0: float = 293.15           # initial / ambient temperature, K
     n_snapshots: int = 12        # number of stored full-field snapshots
     void_cells: int = 8          # minimum cells across the void thickness, radial half-width and angular width
+    far_layer: float = 0.0       # thickness of a uniform zone (spacing dz) against the far face z = L, m (0: off;
+                                 # used when the far-face probe matters, i.e. CW transmission)
     theta_max: float = math.pi / 12   # coarsest azimuthal spacing away from the void (3-D runs)
     max_cells: int = 600_000
     max_steps: int = 400_000
@@ -320,10 +358,9 @@ class SimConfig:
         sqrt(D dt) it does not damp the high-frequency error excited by a jump in the flux, it only flips its
         sign every step (ringing).  A few strongly damping steps remove it (Rannacher start-up)."""
         th = np.full(len(times) - 1, 0.5)
-        if self.laser.profile == "square":
-            for t_disc in (0.0, self.laser.tau_p):
-                i = max(0, int(np.searchsorted(times, t_disc, side="right")) - 1)      # step containing the jump
-                th[i:i + n_damp] = 1.0
+        for t_disc in self.laser.discontinuities:
+            i = max(0, int(np.searchsorted(times, t_disc, side="right")) - 1)      # step containing the jump
+            th[i:i + n_damp] = 1.0
         return th
 
     @property
@@ -347,7 +384,7 @@ class SimConfig:
         warnings = []
         # The back-face warning applies only to the old model (adiabatic face at z = L).  With the bottom
         # stack the back side is modelled physically, so deep targets need no warning.
-        if L_diff > 0.8 * g.L and not self.bottom.enabled:
+        if L_diff > 0.8 * g.L and not self.bottom.enabled and not la.is_cw:
             warnings.append(
                 f"열 침투 깊이 sqrt(D*t_end) = {L_diff * 1e6:.0f} μm 가 로드 길이의 80%({0.8 * g.L * 1e6:.0f} μm)를 넘습니다. "
                 "후면 단열 경계조건이 결과에 영향을 줍니다."
@@ -597,6 +634,8 @@ def build_grid(cfg: SimConfig) -> Grid:
         if v.thickness > 0 and v.depth < g.L:        # zone kept even for the baseline (same grid)
             m = min(v.thickness, 5.0 * dz_v)
             zones_z = _insert_zone(zones_z, (max(0.0, v.depth - m), min(g.L, v.z_bottom + m), dz_v, [v.depth, v.z_bottom]))
+    if n.far_layer > 0:                               # far-face probe zone (CW transmission): uniform dz against z = L
+        zones_z = _insert_zone(zones_z, (max(0.0, g.L - n.far_layer), g.L, dz, []))
     b = cfg.bottom
     if b.enabled:
         # bottom stack: faces exactly at z = L and at the oxide/pad interface; thin oxide resolved by 4 cells,
@@ -621,9 +660,10 @@ def build_grid(cfg: SimConfig) -> Grid:
     # ---- silica shell (or copper in the homogeneous validation mode)
     outer = cfg.copper if g.homogeneous_copper else cfg.silica
     L_out = math.sqrt(outer.alpha * cfg.t_end)
-    r_max = g.R_cu + max(2.0 * g.R_cu, 4.0 * L_out)
+    r_max = g.R_cu + max(2.0 * g.R_cu, 4.0 * L_out) if g.R_out is None else g.R_out
     d_last = r_faces[-1] - r_faces[-2]
-    r_faces = np.concatenate([r_faces, _stretched_faces(g.R_cu, r_max, d_last, n.stretch)])
+    if r_max > g.R_cu * (1.0 + 1e-12):
+        r_faces = np.concatenate([r_faces, _stretched_faces(g.R_cu, r_max, d_last, n.stretch)])
 
     grid = Grid(r_faces=r_faces, z_faces=z_faces)
     if grid.n_cells > n.max_cells:
@@ -736,13 +776,15 @@ def beam_annulus_weights(r_faces: np.ndarray, laser: "Laser", r_cut: float) -> n
     return gaussian_annulus_weights(r_faces, laser.w, r_cut)
 
 
-def probe_weights(cfg: SimConfig, grid: Grid) -> np.ndarray:
-    """Normalised radial weights for the probe-averaged surface temperature."""
-    if cfg.laser.probe_w <= 0:
+def probe_weights(cfg: SimConfig, grid: Grid, w: Optional[float] = None) -> np.ndarray:
+    """Normalised radial weights for the probe-averaged surface temperature (1/e^2 radius `w`, default the
+    pump-face probe `laser.probe_w`; the far-face probe passes `laser.probe_w_far_eff`)."""
+    w = cfg.laser.probe_w if w is None else w
+    if w <= 0:
         wts = np.zeros(grid.nr)
         wts[0] = 1.0
         return wts
-    wts = gaussian_annulus_weights(grid.r_faces, cfg.laser.probe_w, cfg.geometry.R_cu)
+    wts = gaussian_annulus_weights(grid.r_faces, w, cfg.geometry.R_cu)
     return wts / wts.sum()
 
 
@@ -765,6 +807,8 @@ class SimResult:
     is_3d: bool = False             # True: solved in (r, theta, z); snapshots/T_surface/material hold the (x, z) plane (nz, 2 nr)
     n_theta: int = 1
     E_out: Optional[np.ndarray] = None   # (nt,) cumulative heat lost to the heat sink below the pad, J
+    T_far: Optional[np.ndarray] = None   # (nt, nr) temperature of the far face z = L of the rod (2-D solver)
+    T_probe_far: Optional[np.ndarray] = None   # (nt,) probe-weighted far-face temperature (2-D solver)
 
     @property
     def E_lost(self) -> np.ndarray:
@@ -783,6 +827,11 @@ class SimResult:
     @property
     def dT_probe(self) -> np.ndarray:
         return self.T_probe - self.config.numerics.T0
+
+    @property
+    def dT_probe_far(self) -> Optional[np.ndarray]:
+        """Probe-weighted temperature rise of the far face z = L (None when the run did not record it)."""
+        return None if self.T_probe_far is None else self.T_probe_far - self.config.numerics.T0
 
     @property
     def n_cells(self) -> int:
@@ -807,7 +856,8 @@ def run_simulation(
     N = nr * nz
 
     C = (rho_cp * grid.volume).ravel()                       # J/K per cell
-    Lap = assemble_laplacian(grid, k, interface_resistance(cfg, grid))
+    r_extra = interface_resistance(cfg, grid)
+    Lap = assemble_laplacian(grid, k, r_extra)
     # heat sink below the thermal pad: the far face of the last cell row is held at ambient (theta = 0)
     g_sink = np.zeros(N)
     if cfg.bottom.enabled and cfg.bottom.sink == "isothermal":
@@ -846,9 +896,28 @@ def run_simulation(
     q_face_unit = src[:nr] / grid.face_area_z          # W/m^2 at f = 1
     face_corr = q_face_unit * (0.5 * dz0) / k[0, :]    # K at f = 1
 
+    # Far face (z = L of the rod), reconstructed the same way: T_face = T_c - q_out * (z_face - z_c) / k with q_out
+    # the flux leaving the last rod cell row through that face (zero for the adiabatic face, the sink flux for an
+    # isothermal face, the axial link flux when a bottom stack follows).  This is what a probe on the far face sees.
+    j_L = min(max(int(np.searchsorted(grid.z_faces, cfg.geometry.L, side="left")) - 1, 0), nz - 1)   # row ending at z = L
+    d_far = grid.z_faces[j_L + 1] - grid.z_c[j_L]
+    if j_L == nz - 1:
+        g_far = g_sink[-nr:] / grid.face_area_z          # W/(m^2 K) at the domain's last face
+
+        def far_face(T2):
+            return T2[j_L] - g_far * T2[j_L] * d_far / k[j_L, :]
+    else:
+        R_far = d_far / k[j_L, :] + (grid.z_c[j_L + 1] - grid.z_faces[j_L + 1]) / k[j_L + 1, :] + r_extra[j_L]
+
+        def far_face(T2):
+            return T2[j_L] - (T2[j_L] - T2[j_L + 1]) / R_far * d_far / k[j_L, :]
+
     pw = probe_weights(cfg, grid)
+    pw_far = probe_weights(cfg, grid, la.probe_w_far_eff)
     T_surface = np.empty((n_steps + 1, nr))
     T_probe = np.empty(n_steps + 1)
+    T_far = np.empty((n_steps + 1, nr))
+    T_probe_far = np.empty(n_steps + 1)
     T_axis = np.empty((n_steps + 1, nz))
     E_in = np.zeros(n_steps + 1)
     E_stored = np.zeros(n_steps + 1)
@@ -864,6 +933,9 @@ def run_simulation(
         Ts = T2[0] + face_corr * pulse[n] + T0
         T_surface[n] = Ts
         T_probe[n] = pw @ Ts
+        Tf = far_face(T2) + T0
+        T_far[n] = Tf
+        T_probe_far[n] = pw_far @ Tf
         T_axis[n] = T2[:, 0] + T0
         E_stored[n] = float(C @ T)
         if n in snap_idx:
@@ -898,6 +970,7 @@ def run_simulation(
         config=cfg, grid=grid, material=mat, times=times, T_surface=T_surface, T_probe=T_probe,
         T_axis=T_axis, snapshots=snapshots, E_in=E_in, E_stored=E_stored, pulse=pulse,
         wall_time=time.perf_counter() - t_start, diagnostics=diag, E_out=E_out,
+        T_far=T_far, T_probe_far=T_probe_far,
     )
 
 
