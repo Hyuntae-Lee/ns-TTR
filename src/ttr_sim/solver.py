@@ -788,6 +788,38 @@ def probe_weights(cfg: SimConfig, grid: Grid, w: Optional[float] = None) -> np.n
     return wts / wts.sum()
 
 
+def sink_conductances(cfg: SimConfig, grid: Grid, k: np.ndarray) -> np.ndarray:
+    """Conductance (W/K) from each cell to the ambient through an isothermal boundary, shape (N,): the far face
+    of the last cell row when the bottom stack ends in a heat sink; zero otherwise."""
+    nr, nz = grid.nr, grid.nz
+    g = np.zeros(nr * nz)
+    if cfg.bottom.enabled and cfg.bottom.sink == "isothermal":
+        g[-nr:] = k[-1, :] * grid.face_area_z / (0.5 * grid.dz_c[-1])
+    return g
+
+
+def far_face_reconstructor(cfg: SimConfig, grid: Grid, k: np.ndarray, r_extra: np.ndarray, g_sink: np.ndarray) -> Callable:
+    """Function T2 (nz, nr) -> temperature of the far face z = L of the rod, (nr,), reconstructed the same
+    second-order way as the pump face: T_face = T_c - q_out * (z_face - z_c) / k with q_out the flux leaving the
+    last rod cell row through that face (zero for the adiabatic face, the sink flux for an isothermal face, the
+    axial link flux when a bottom stack follows).  This is what a probe on the far face sees.  Linear in T2, so
+    it applies to complex amplitudes as well."""
+    nr, nz = grid.nr, grid.nz
+    j_L = min(max(int(np.searchsorted(grid.z_faces, cfg.geometry.L, side="left")) - 1, 0), nz - 1)   # row ending at z = L
+    d_far = grid.z_faces[j_L + 1] - grid.z_c[j_L]
+    if j_L == nz - 1:
+        g_far = g_sink[-nr:] / grid.face_area_z          # W/(m^2 K) at the domain's last face
+
+        def far_face(T2):
+            return T2[j_L] - g_far * T2[j_L] * d_far / k[j_L, :]
+    else:
+        R_far = d_far / k[j_L, :] + (grid.z_c[j_L + 1] - grid.z_faces[j_L + 1]) / k[j_L + 1, :] + r_extra[j_L]
+
+        def far_face(T2):
+            return T2[j_L] - (T2[j_L] - T2[j_L + 1]) / R_far * d_far / k[j_L, :]
+    return far_face
+
+
 # ----------------------------------------------------------------------------- result
 @dataclass
 class SimResult:
@@ -859,9 +891,8 @@ def run_simulation(
     r_extra = interface_resistance(cfg, grid)
     Lap = assemble_laplacian(grid, k, r_extra)
     # heat sink below the thermal pad: the far face of the last cell row is held at ambient (theta = 0)
-    g_sink = np.zeros(N)
-    if cfg.bottom.enabled and cfg.bottom.sink == "isothermal":
-        g_sink[-nr:] = k[-1, :] * grid.face_area_z / (0.5 * grid.dz_c[-1])
+    g_sink = sink_conductances(cfg, grid, k)
+    if g_sink.any():
         Lap = (Lap + sp.diags(g_sink)).tocsr()
     Cdiag = sp.diags(C)
     times = cfg.time_grid()
@@ -896,22 +927,7 @@ def run_simulation(
     q_face_unit = src[:nr] / grid.face_area_z          # W/m^2 at f = 1
     face_corr = q_face_unit * (0.5 * dz0) / k[0, :]    # K at f = 1
 
-    # Far face (z = L of the rod), reconstructed the same way: T_face = T_c - q_out * (z_face - z_c) / k with q_out
-    # the flux leaving the last rod cell row through that face (zero for the adiabatic face, the sink flux for an
-    # isothermal face, the axial link flux when a bottom stack follows).  This is what a probe on the far face sees.
-    j_L = min(max(int(np.searchsorted(grid.z_faces, cfg.geometry.L, side="left")) - 1, 0), nz - 1)   # row ending at z = L
-    d_far = grid.z_faces[j_L + 1] - grid.z_c[j_L]
-    if j_L == nz - 1:
-        g_far = g_sink[-nr:] / grid.face_area_z          # W/(m^2 K) at the domain's last face
-
-        def far_face(T2):
-            return T2[j_L] - g_far * T2[j_L] * d_far / k[j_L, :]
-    else:
-        R_far = d_far / k[j_L, :] + (grid.z_c[j_L + 1] - grid.z_faces[j_L + 1]) / k[j_L + 1, :] + r_extra[j_L]
-
-        def far_face(T2):
-            return T2[j_L] - (T2[j_L] - T2[j_L + 1]) / R_far * d_far / k[j_L, :]
-
+    far_face = far_face_reconstructor(cfg, grid, k, r_extra, g_sink)
     pw = probe_weights(cfg, grid)
     pw_far = probe_weights(cfg, grid, la.probe_w_far_eff)
     T_surface = np.empty((n_steps + 1, nr))

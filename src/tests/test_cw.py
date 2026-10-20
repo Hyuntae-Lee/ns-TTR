@@ -187,3 +187,117 @@ def test_far_face_is_recorded_for_pulse_runs_too():
     sink = run_simulation(replace(base, bottom=BottomStack(enabled=True, sink="isothermal")))
     assert np.all(np.isfinite(sink.T_far)) and sink.dT_probe_far.min() >= -1e-12
     assert sink.dT_probe_far.max() <= sink.dT_probe.max()
+
+
+# ============================================================================= step 3: analysis methods
+from ttr_sim import analysis as an  # noqa: E402
+from ttr_sim.transmission import frequency_response  # noqa: E402
+
+A_ROD = math.pi * R_CU ** 2
+RHO_CP = COPPER.rho_cp
+FREQS = np.array([20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0])
+
+
+def test_fin_model_reduces_to_the_slab_solution():
+    t = np.linspace(0.0, 3e-3, 50)
+    q = 4e-3 / A_ROD
+    np.testing.assert_allclose(an.fin_step_response(t, COPPER.k, RHO_CP, L_ROD, A_ROD, 4e-3, 0.0),
+                               slab_far_face_step(t, q, L_ROD), rtol=1e-9, atol=1e-12)
+    # a lateral loss lowers the far face and bends the curve over
+    lossy = an.fin_step_response(t, COPPER.k, RHO_CP, L_ROD, A_ROD, 4e-3, G_prime=20.0)
+    assert np.all(lossy[1:] < slab_far_face_step(t[1:], q, L_ROD)) and np.all(np.diff(lossy) > 0)
+
+
+def test_analysis_methods_recover_copper_on_the_lossless_rod(long_run):
+    cfg, resp = long_run
+    k, a = cfg.copper.k, cfg.laser.w
+    si = an.step_intercept(resp.t, resp.dT_far, L_ROD, RHO_CP, resp.P_abs, A_ROD)        # tangent at maximum slope
+    assert si["t_int"] == pytest.approx(slab_intercept(L_ROD), rel=0.01)
+    assert si["k_eff"] == pytest.approx(k, rel=0.01) and si["rho_cp_eff"] == pytest.approx(RHO_CP, rel=0.01)
+    si_w = an.step_intercept(resp.t, resp.dT_far, L_ROD, RHO_CP, t_from=0.6 * resp.t[-1])   # explicit fit window
+    assert si_w["k_eff"] == pytest.approx(k, rel=0.01)
+    pk = an.parker(resp.t, resp.dT_far, L_ROD, RHO_CP)
+    assert pk["t_half"] == pytest.approx(an.PARKER_CONSTANT * L_ROD ** 2 / cfg.copper.alpha, rel=0.02)
+    assert pk["k_eff"] == pytest.approx(k, rel=0.02)
+    # two-face difference of an adiabatic rod: quasi-steady P L / (2 k A) plus the spot spreading ~ 1 / (4 k a)
+    tf = an.two_face_resistance(resp.t, resp.dT_pump, resp.dT_far, resp.P_abs, L_ROD, A_ROD, spot_radius=a)
+    assert tf["R_th"] == pytest.approx(L_ROD / (2.0 * k * A_ROD) + 1.0 / (4.0 * k * a), rel=0.05)
+    assert tf["k_eff"] == L_ROD / (tf["R_th"] * A_ROD)
+    ff = an.fit_fin_model(resp.t, resp.dT_far, resp.P_abs, L_ROD, A_ROD, RHO_CP, fit_loss=True)
+    fl = an.fit_fin_model(resp.t, resp.dT_far, resp.P_abs, L_ROD, A_ROD, RHO_CP, fit_loss=False)
+    assert ff["k_eff"] == pytest.approx(k, rel=0.01) and fl["k_eff"] == pytest.approx(k, rel=0.01)
+    assert ff["G_prime"] * resp.t[-1] / (RHO_CP * A_ROD) < 1e-3 and fl["rms_rel"] < 1e-3   # effectively lossless
+
+
+def test_tlm_and_lockin_on_the_lossless_rod(long_run):
+    cfg, resp = long_run
+    k = cfg.copper.k
+    Hp, Hf = an.tlm_response(FREQS, k, RHO_CP, L_ROD, A_ROD)
+    # low-frequency limit of the far face: the whole rod heats as a lumped capacity, |H| -> 1 / (omega rho c A L)
+    w = 2.0 * math.pi * FREQS[0]
+    assert abs(Hf[0]) == pytest.approx(1.0 / (w * RHO_CP * A_ROD * L_ROD), rel=0.05)
+    assert np.all(np.diff(np.abs(Hf)) < 0) and np.all(np.degrees(np.angle(Hf[:3])) < -90.0)
+    # the step response (lossless: constant final slope, linear tail exact) gives the same H
+    Hs = an.frequency_response_from_step(resp.t, resp.dT_far, FREQS, resp.P_abs)
+    np.testing.assert_allclose(np.abs(Hs), np.abs(Hf), rtol=0.01)
+    assert np.max(np.abs(np.degrees(np.angle(Hs / Hf)))) < 1.0
+    # inversion: exact data -> exact k; step data -> k within 1 %
+    assert an.invert_tlm(FREQS, Hf, RHO_CP, L_ROD, A_ROD)["k_eff"] == pytest.approx(k, rel=1e-6)
+    assert an.invert_tlm(FREQS, Hs, RHO_CP, L_ROD, A_ROD)["k_eff"] == pytest.approx(k, rel=0.01)
+    assert an.invert_tlm(FREQS, Hs, RHO_CP, L_ROD, A_ROD, fit_loss=True)["k_eff"] == pytest.approx(k, rel=0.01)
+    # lock-in reading of a square-chopped pump: fundamental 2 P / pi
+    lk = an.lockin(Hf, resp.P_abs)
+    np.testing.assert_allclose(lk["amplitude"], 2.0 / math.pi * resp.P_abs * np.abs(Hf))
+    np.testing.assert_allclose(lk["phase_deg"], np.degrees(np.angle(Hf)))
+    assert an.lockin(Hf, resp.P_abs, chop="sine")["amplitude"][0] == pytest.approx(0.5 * resp.P_abs * abs(Hf[0]))
+
+
+def test_frequency_domain_solve_matches_tlm_and_step_fft(long_run):
+    cfg, resp = long_run
+    fr = frequency_response(cfg, FREQS)
+    Hp, Hf = an.tlm_response(FREQS, cfg.copper.k, RHO_CP, L_ROD, A_ROD)
+    np.testing.assert_allclose(np.abs(fr.H_far), np.abs(Hf), rtol=0.005)
+    assert np.max(np.abs(np.degrees(np.angle(fr.H_far / Hf)))) < 0.5
+    assert fr.P_abs == pytest.approx(resp.P_abs)
+    # pump face: spreading of the small spot makes it much hotter than the 1-D line predicts, lag smaller
+    assert np.all(np.abs(fr.H_pump) > np.abs(Hp)) and np.all(np.abs(fr.H_pump) > np.abs(fr.H_far))
+    # cross-validation with the time integrator (spec §2.4 / §5.2)
+    Hs = an.frequency_response_from_step(resp.t, resp.dT_far, FREQS, resp.P_abs)
+    np.testing.assert_allclose(np.abs(Hs), np.abs(fr.H_far), rtol=0.01)
+    assert np.max(np.abs(np.degrees(np.angle(Hs / fr.H_far)))) < 1.0
+
+
+def test_glass_shell_model_and_analyze_on_the_real_structure():
+    cfg = cw_config()
+    resp = run_step_response(cfg, store_fields=False)
+    fr = frequency_response(cfg, FREQS)
+    shell = (R_CU, FUSED_SILICA)
+    # the rod-in-glass TLM reproduces the 2-D solve (axial conduction in the glass and the spot are the rest)
+    _, Hsh = an.tlm_response(FREQS, cfg.copper.k, RHO_CP, L_ROD, A_ROD, shell=shell)
+    np.testing.assert_allclose(np.abs(fr.H_far), np.abs(Hsh), rtol=0.03)
+    assert np.max(np.abs(np.degrees(np.angle(fr.H_far / Hsh)))) < 2.0
+    # the lateral admittance falls towards DC (only logarithmically: a 2-D medium has no steady state, spec §1)
+    # and the glass makes the far face colder than the bare rod
+    Y = an.lateral_admittance(np.array([1e-3, 1.0, 1e3]), R_CU, FUSED_SILICA)
+    assert abs(Y[0]) < abs(Y[1]) < 0.3 * abs(Y[2]) and np.all(np.real(Y) > 0)
+    assert abs(Y[0]) == pytest.approx(2.0 * math.pi * FUSED_SILICA.k / math.log(1.0 / abs(np.sqrt(2j * math.pi * 1e-3 / FUSED_SILICA.alpha) * R_CU)), rel=0.3)
+    _, Hbare = an.tlm_response(FREQS, cfg.copper.k, RHO_CP, L_ROD, A_ROD)
+    assert np.all(np.abs(Hsh) < np.abs(Hbare))
+    # step FFT agrees with the direct solve where the window resolves the frequency
+    Hs = an.frequency_response_from_step(resp.t, resp.dT_far, FREQS, resp.P_abs)
+    mid = (FREQS >= 50.0) & (FREQS <= 500.0)
+    np.testing.assert_allclose(np.abs(Hs[mid]), np.abs(fr.H_far[mid]), rtol=0.02)
+    # all methods: the glass-shell inversion recovers copper, the lossless / constant-loss ones are biased
+    res = an.analyze(resp.t, resp.dT_pump, resp.dT_far, resp.P_abs, L_ROD, A_ROD, RHO_CP, spot_radius=cfg.laser.w,
+                     freqs=FREQS, H_far=fr.H_far, fit_t_max=3e-3, shell=shell)
+    kt = an.k_eff_table(res)
+    assert set(kt) >= {"step_intercept", "parker", "two_face", "fin_fit", "fin_fit_lossless", "tlm", "tlm_loss", "tlm_shell"}
+    assert kt["tlm_shell"] == pytest.approx(cfg.copper.k, rel=0.03)
+    assert kt["tlm"] < 0.98 * cfg.copper.k                        # lateral loss read as a lower k
+    assert kt["fin_fit"] < 0.9 * cfg.copper.k                     # a constant conductance is the wrong glass model
+    assert kt["step_intercept"] > 1.1 * cfg.copper.k and kt["parker"] > 1.1 * cfg.copper.k   # faster apparent rise
+    assert res["step_intercept"]["rho_cp_eff"] > 1.5 * RHO_CP     # the glass shares the heat
+    assert all(m in an.METHOD_LABELS for m in kt)
+    # baseline-vs-"void" comparison bookkeeping
+    cmp = an.compare(res, res)
+    assert all(row[2] == 0.0 for rows in cmp.values() for row in rows.values())

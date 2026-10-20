@@ -22,13 +22,21 @@ Grid / time stepping (all through the existing `SimConfig` machinery, nothing CW
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
 import numpy as np
 
+import scipy.sparse as sp
+import scipy.sparse.linalg as spla
+
 from .materials import COPPER, FUSED_SILICA, Material
-from .solver import BottomStack, Geometry, Laser, Numerics, SimConfig, SimResult, VoidSpec, run_simulation
+from .solver import (
+    MAT_COPPER, BottomStack, Geometry, Laser, Numerics, SimConfig, SimResult, VoidSpec, _property_arrays,
+    assemble_laplacian, beam_annulus_weights, build_grid, far_face_reconstructor, interface_resistance, material_map,
+    probe_weights, run_simulation, sink_conductances,
+)
 
 PUMP_SPOT_RADIUS = math.sqrt(6e-6 * 5e-6)   # equivalent circular radius of the flat 12 x 10 um elliptical spot, m
 PROBE_RADIUS = 4e-6                         # 1/e^2 radius of the 8 um probe spots, m
@@ -139,8 +147,11 @@ class StepResponse:
 
 def outer_radius(cfg: SimConfig) -> float:
     """Outer radius of the computational domain actually used (automatic shell or `Geometry.R_out`)."""
-    from .solver import build_grid
     return float(build_grid(cfg).r_faces[-1])
+
+
+def rod_area(cfg: SimConfig) -> float:
+    return math.pi * cfg.geometry.R_cu ** 2
 
 
 def run_step_response(cfg: SimConfig, progress: Optional[Callable[[float], None]] = None,
@@ -201,3 +212,69 @@ def slab_far_face_step(t, q: float, L: float, mat: Material = COPPER, n_terms: i
 def slab_intercept(L: float, mat: Material = COPPER) -> float:
     """Time intercept L^2 / (6 alpha) of the far-face linear asymptote, s."""
     return L ** 2 / (6.0 * mat.alpha)
+
+
+# ----------------------------------------------------------------------------- frequency-domain direct solve (spec §2.4)
+@dataclass
+class FrequencyResponse:
+    """Complex temperature amplitudes per unit absorbed-power amplitude [K/W] at the two probes:
+    (Lap + i omega C) T^ = src, same matrices as the time integrator; dT(t) = Re(H e^{i omega t}) for
+    P_abs(t) = Re(e^{i omega t}), so arg H <= 0 is the lag."""
+    freqs: np.ndarray             # Hz
+    H_pump: np.ndarray            # complex, K/W
+    H_far: np.ndarray             # complex, K/W
+    P_abs: float                  # absorbed power of the configuration, W (for lock-in amplitudes)
+    n_cells: int
+    wall_time: float
+
+    @property
+    def amplitude_far(self) -> np.ndarray:
+        return np.abs(self.H_far)
+
+    @property
+    def phase_far_deg(self) -> np.ndarray:
+        return np.degrees(np.angle(self.H_far))
+
+
+def frequency_response(cfg: SimConfig, freqs, progress: Optional[Callable[[float], None]] = None) -> FrequencyResponse:
+    """Direct harmonic solution on the CW grid: one complex sparse LU per frequency.  The pump face is
+    reconstructed with the (complex) flux correction like the time solver, the far face with the same
+    far-face reconstructor; both are probe-weighted.  Exact for the discretised system, so it cross-checks
+    the time integrator (step response -> FFT) and gives lock-in amplitude / phase without any transient."""
+    t_start = time.perf_counter()
+    grid = build_grid(cfg)
+    mat = material_map(cfg, grid)
+    k, rho_cp = _property_arrays(cfg, mat)
+    nr, nz = grid.nr, grid.nz
+    N = nr * nz
+    C = (rho_cp * grid.volume).ravel()
+    r_extra = interface_resistance(cfg, grid)
+    Lap = assemble_laplacian(grid, k, r_extra)
+    g_sink = sink_conductances(cfg, grid, k)
+    if g_sink.any():
+        Lap = (Lap + sp.diags(g_sink)).tocsr()
+    la = cfg.laser
+    Wsrc = beam_annulus_weights(grid.r_faces, la, cfg.geometry.R_cu)
+    Wsrc[mat[0, :] != MAT_COPPER] = 0.0
+    src = np.zeros(N)
+    src[:nr] = la.I0 * (1.0 - la.reflectivity) * Wsrc
+    P_abs = float(src.sum())
+    face_corr = (src[:nr] / grid.face_area_z) * (0.5 * grid.dz_c[0]) / k[0, :]      # K at unit f (complex f: same)
+    far_face = far_face_reconstructor(cfg, grid, k, r_extra, g_sink)
+    pw = probe_weights(cfg, grid)
+    pw_far = probe_weights(cfg, grid, la.probe_w_far_eff)
+    freqs = np.atleast_1d(np.asarray(freqs, float))
+    H_pump = np.empty(len(freqs), complex)
+    H_far = np.empty(len(freqs), complex)
+    Cd = sp.diags(C.astype(complex))
+    for i, f in enumerate(freqs):
+        w = 2.0 * math.pi * f
+        A = (Lap.astype(complex) + 1j * w * Cd).tocsc()
+        T = spla.splu(A).solve(src.astype(complex))
+        T2 = T.reshape(nz, nr)
+        H_pump[i] = (pw @ (T2[0] + face_corr)) / P_abs
+        H_far[i] = (pw_far @ far_face(T2)) / P_abs
+        if progress is not None:
+            progress((i + 1) / len(freqs))
+    return FrequencyResponse(freqs=freqs, H_pump=H_pump, H_far=H_far, P_abs=P_abs, n_cells=N,
+                             wall_time=time.perf_counter() - t_start)
