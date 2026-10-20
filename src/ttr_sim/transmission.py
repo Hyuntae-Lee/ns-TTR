@@ -4,10 +4,14 @@ Geometry / conventions
 ----------------------
 * z = 0 is the PUMP face (heat source), z = L the opposite (far) face; both faces are adiabatic (air), the
   bottom stack of the reflection mode is disabled.
-* r <= R_cu copper, R_cu < r <= R_out silica.  Outer boundary option `outer`:
+* r <= R_cu copper, R_cu < r <= R_out silica.  Outer boundary option `outer` (spec §2.1):
     "far"               : large adiabatic shell (automatic radius, 4 silica diffusion lengths of the window); valid
-                          until the heat reaches it, which `StepResponse.warnings` reports (spec §2.1).
-    "neighbor_sink" / "neighbor_adiabatic" : spec step 5, not implemented yet (raise).
+                          until the heat reaches it, which `StepResponse.warnings` reports.
+    "neighbor_sink"     : isothermal (ambient) boundary at r = pitch - R_cu: the neighbouring vias as perfect heat
+                          sinks, the LOWER bound of the DC / low-frequency signal.
+    "neighbor_adiabatic": adiabatic boundary at r = pitch / 2 (the symmetry cell of the array), the UPPER bound.
+  The truth lies between the two neighbour options; their spread measures how much the late-time signal is
+  governed by the array rather than by the via.
 * Pump: CW, switched on at t = 0, incident power `power`, flat-top spot of equivalent circular radius
   a = sqrt(6 um * 5 um) ~ 5.5 um (12 x 10 um ellipse), absorbed fraction 1 - reflectivity.
 * Probes: Gaussian weights, 1/e^2 radius 4 um on both faces.
@@ -62,6 +66,7 @@ def cw_config(
     void: Optional[VoidSpec] = None,
     extra_voids: tuple = (),
     outer: str = "far",
+    pitch: Optional[float] = None,
     R_out: Optional[float] = None,
     homogeneous_copper: bool = False,
     dz: float = 2.5e-6,
@@ -76,13 +81,22 @@ def cw_config(
     """SimConfig for the CW transmission measurement (pump at z = 0, probes on both faces, far face adiabatic).
 
     `void` (and `extra_voids`) follow the reflection-mode `VoidSpec` with depths measured from the pump face;
-    None gives the void-free baseline.  `R_out` overrides the automatic outer radius (R_out = R_cu: no silica at
-    all, an adiabatic rod side, used by the 1-D analytic checks).  `**numerics` are forwarded to `Numerics`.
+    None gives the void-free baseline.  `outer` selects the boundary at the outer radius (module docstring);
+    the neighbour options need the via `pitch`.  `R_out` overrides the automatic outer radius of "far"
+    (R_out = R_cu: no silica at all, an adiabatic rod side, used by the 1-D analytic checks).
+    `**numerics` are forwarded to `Numerics`.
     """
     if outer not in OUTER_OPTIONS:
         raise ValueError(f"outer must be one of {OUTER_OPTIONS}, got {outer!r}")
-    if outer != "far":
-        raise NotImplementedError(f"outer boundary {outer!r} is spec step 5 (neighbour-via boundaries); only 'far' exists yet")
+    outer_bc = "adiabatic"
+    if outer == "neighbor_sink":
+        if pitch is None or pitch <= 2.0 * R_cu:
+            raise ValueError("neighbor_sink needs pitch > 2 R_cu")
+        R_out, outer_bc = pitch - R_cu, "isothermal"
+    elif outer == "neighbor_adiabatic":
+        if pitch is None or pitch <= 2.0 * R_cu:
+            raise ValueError("neighbor_adiabatic needs pitch > 2 R_cu")
+        R_out = 0.5 * pitch
     if power <= 0:
         raise ValueError("power must be positive")
     if t_end <= 0:
@@ -99,7 +113,7 @@ def cw_config(
         dt_growth=dt_growth, stretch=stretch, **numerics,
     )
     return SimConfig(
-        geometry=Geometry(R_cu=R_cu, L=L, homogeneous_copper=homogeneous_copper, R_out=R_out),
+        geometry=Geometry(R_cu=R_cu, L=L, homogeneous_copper=homogeneous_copper, R_out=R_out, outer_bc=outer_bc),
         void=(null_void() if void is None else void),
         extra_voids=tuple(extra_voids),
         laser=laser, numerics=num, copper=copper, silica=silica,
@@ -119,6 +133,7 @@ class StepResponse:
     energy_error_max: float       # same, worst step
     E_in: np.ndarray              # (nt,) cumulative absorbed energy, J
     E_stored: np.ndarray          # (nt,) stored thermal energy, J
+    E_out: np.ndarray             # (nt,) heat released to isothermal boundaries (neighbour sink), J
     result: SimResult
     warnings: list = field(default_factory=list)
 
@@ -163,11 +178,11 @@ def run_step_response(cfg: SimConfig, progress: Optional[Callable[[float], None]
     la = cfg.laser
     P_abs = la.power * (1.0 - la.reflectivity) * res.diagnostics["absorbed_fraction_in_rod"]
     warnings = list(res.diagnostics.get("warnings", []))
-    # spec §2.1: the "far" boundary is only valid while the heat has not reached it
+    # spec §2.1: the "far" (adiabatic, automatic) boundary is only valid while the heat has not reached it
     outer_mat = cfg.copper if cfg.geometry.homogeneous_copper else cfg.silica
     R_max = float(res.grid.r_faces[-1])
     shell = R_max - cfg.geometry.R_cu
-    if shell > 0:
+    if shell > 0 and cfg.geometry.outer_bc == "adiabatic":
         L_out = math.sqrt(outer_mat.alpha * cfg.t_end)
         if L_out > 0.8 * shell:
             warnings.append(
@@ -177,7 +192,7 @@ def run_step_response(cfg: SimConfig, progress: Optional[Callable[[float], None]
     return StepResponse(
         t=res.times, dT_pump=res.dT_probe, dT_far=res.dT_probe_far, P_abs=P_abs, P_in=la.power,
         energy_error=res.energy_error, energy_error_max=res.energy_error_max,
-        E_in=res.E_in, E_stored=res.E_stored, result=res, warnings=warnings,
+        E_in=res.E_in, E_stored=res.E_stored, E_out=res.E_lost, result=res, warnings=warnings,
     )
 
 

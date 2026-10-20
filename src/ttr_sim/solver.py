@@ -47,6 +47,8 @@ class Geometry:
     homogeneous_copper: bool = False   # validation mode: replace silica by copper (semi-infinite analogue)
     R_out: Optional[float] = None      # outer radius of the domain, m (None: automatic shell that grows with the window;
                                        # R_out <= R_cu: no shell at all, i.e. an adiabatic rod side)
+    outer_bc: str = "adiabatic"        # boundary at r = R_out: "adiabatic" (default) | "isothermal" (held at T0, e.g. a
+                                       # neighbouring via treated as a perfect heat sink, spec CW §2.1)
 
 
 @dataclass
@@ -790,11 +792,18 @@ def probe_weights(cfg: SimConfig, grid: Grid, w: Optional[float] = None) -> np.n
 
 def sink_conductances(cfg: SimConfig, grid: Grid, k: np.ndarray) -> np.ndarray:
     """Conductance (W/K) from each cell to the ambient through an isothermal boundary, shape (N,): the far face
-    of the last cell row when the bottom stack ends in a heat sink; zero otherwise."""
+    of the last cell row when the bottom stack ends in a heat sink, the outer cylindrical face of the last
+    radial column when `Geometry.outer_bc` is "isothermal"; zero otherwise."""
     nr, nz = grid.nr, grid.nz
     g = np.zeros(nr * nz)
     if cfg.bottom.enabled and cfg.bottom.sink == "isothermal":
         g[-nr:] = k[-1, :] * grid.face_area_z / (0.5 * grid.dz_c[-1])
+    if cfg.geometry.outer_bc == "isothermal":
+        A_side = 2.0 * math.pi * grid.r_faces[-1] * grid.dz_c                    # (nz,) outer face area per row
+        g2 = g.reshape(nz, nr)
+        g2[:, -1] += k[:, -1] * A_side / (grid.r_faces[-1] - grid.r_c[-1])
+    elif cfg.geometry.outer_bc != "adiabatic":
+        raise ValueError(f"Geometry.outer_bc must be 'adiabatic' or 'isothermal', got {cfg.geometry.outer_bc!r}")
     return g
 
 
@@ -808,7 +817,10 @@ def far_face_reconstructor(cfg: SimConfig, grid: Grid, k: np.ndarray, r_extra: n
     j_L = min(max(int(np.searchsorted(grid.z_faces, cfg.geometry.L, side="left")) - 1, 0), nz - 1)   # row ending at z = L
     d_far = grid.z_faces[j_L + 1] - grid.z_c[j_L]
     if j_L == nz - 1:
-        g_far = g_sink[-nr:] / grid.face_area_z          # W/(m^2 K) at the domain's last face
+        g_bottom = np.zeros(nr)                            # W/K through the domain's last face only (no side sink)
+        if cfg.bottom.enabled and cfg.bottom.sink == "isothermal":
+            g_bottom = k[-1, :] * grid.face_area_z / (0.5 * grid.dz_c[-1])
+        g_far = g_bottom / grid.face_area_z                # W/(m^2 K)
 
         def far_face(T2):
             return T2[j_L] - g_far * T2[j_L] * d_far / k[j_L, :]

@@ -67,8 +67,8 @@ def test_cw_config_follows_spec_section_6():
     assert np.max(np.diff(grid.z_faces)[-4:]) == pytest.approx(n.dz, rel=1e-6)
     with pytest.raises(ValueError):
         cw_config(outer="nowhere")
-    with pytest.raises(NotImplementedError):
-        cw_config(outer="neighbor_sink")
+    with pytest.raises(ValueError):
+        cw_config(outer="neighbor_sink")          # pitch missing
     with pytest.raises(ValueError):
         run_step_response(SimConfig(geometry=Geometry(), void=VoidSpec(enabled=False), laser=Laser(tau_p=1e-7), numerics=Numerics(dz=1e-6)))
 
@@ -301,3 +301,77 @@ def test_glass_shell_model_and_analyze_on_the_real_structure():
     # baseline-vs-"void" comparison bookkeeping
     cmp = an.compare(res, res)
     assert all(row[2] == 0.0 for rows in cmp.values() for row in rows.values())
+
+
+# ============================================================================= step 5: outer boundary options
+PITCH = 130e-6      # glass gap 50 um between vias (spec §1 table)
+
+
+def test_neighbour_boundary_options():
+    sink = cw_config(outer="neighbor_sink", pitch=PITCH)
+    adia = cw_config(outer="neighbor_adiabatic", pitch=PITCH)
+    assert sink.geometry.R_out == pytest.approx(PITCH - R_CU) and sink.geometry.outer_bc == "isothermal"
+    assert adia.geometry.R_out == pytest.approx(0.5 * PITCH) and adia.geometry.outer_bc == "adiabatic"
+    assert build_grid(sink).r_faces[-1] == pytest.approx(PITCH - R_CU)
+    for outer in ("neighbor_sink", "neighbor_adiabatic"):
+        with pytest.raises(ValueError):
+            cw_config(outer=outer)                       # pitch missing
+        with pytest.raises(ValueError):
+            cw_config(outer=outer, pitch=1.5 * R_CU)     # vias would overlap
+    with pytest.raises(ValueError):
+        build_grid(replace(sink, geometry=replace(sink.geometry, outer_bc="mirror")))
+        run_simulation(replace(sink, geometry=replace(sink.geometry, outer_bc="mirror")))
+
+
+@pytest.fixture(scope="module")
+def boundary_runs():
+    out = {}
+    for outer in ("far", "neighbor_sink", "neighbor_adiabatic"):
+        cfg = cw_config(outer=outer, pitch=PITCH, t_end=10e-3)
+        out[outer] = (cfg, run_step_response(cfg, store_fields=False))
+    return out
+
+
+def test_side_sink_energy_balance_and_bounds(boundary_runs):
+    far, sink, adia = (boundary_runs[k][1] for k in ("far", "neighbor_sink", "neighbor_adiabatic"))
+    # stored + released = absorbed, every step, with the isothermal side
+    assert abs(sink.energy_error) < 1e-6 and sink.energy_error_max < 1e-6
+    assert sink.E_out[-1] > 0.2 * sink.E_in[-1]                       # a good part of the heat has left through the neighbours
+    assert far.E_out[-1] == 0.0 and adia.E_out[-1] == 0.0
+    assert np.allclose(sink.E_stored + sink.E_out, sink.E_in, rtol=1e-6, atol=1e-6 * sink.E_in[-1])
+    # the neighbour options bracket the "far" result at late times: sink (lower bound) < far < adiabatic cell (upper bound)
+    assert sink.dT_far[-1] < far.dT_far[-1] < adia.dT_far[-1]
+    assert sink.dT_pump[-1] < far.dT_pump[-1] < adia.dT_pump[-1]
+    # before the heat reaches the glass gap all three agree
+    early = far.t < 20e-6
+    assert np.allclose(sink.dT_far[early], far.dT_far[early], rtol=1e-3, atol=1e-9)
+    assert np.allclose(adia.dT_pump[early], far.dT_pump[early], rtol=1e-3, atol=1e-9)
+    assert sink.warnings == []                                        # the "far" warning is not raised for the neighbour boundaries
+    # the neighbour sink gives a true steady state: the far face flattens and matches the DC of the frequency solve
+    cfg_sink = boundary_runs["neighbor_sink"][0]
+    long = run_step_response(replace(cfg_sink, numerics=replace(cfg_sink.numerics, t_end_abs=40e-3)), store_fields=False)
+    H0 = frequency_response(cfg_sink, [1e-3]).H_far[0]
+    assert abs(H0.imag) < 1e-3 * abs(H0.real)
+    assert long.dT_far[-1] == pytest.approx(long.P_abs * H0.real, rel=0.01)
+    assert long.dT_far[-1] - long.dT_far[-5] < 1e-3 * long.dT_far[-1]
+
+
+def test_lateral_loss_biases_the_methods_in_order(boundary_runs):
+    """Each method's k_eff must come out ordered like the lateral loss: the more heat leaves sideways, the more
+    the (lossless-model) methods are biased.  The shell-model TLM is the least biased on 'far'."""
+    freqs = np.array([50.0, 100.0, 200.0, 500.0, 1000.0])
+    k = {}
+    for outer, (cfg, resp) in boundary_runs.items():
+        fr = frequency_response(cfg, freqs)
+        res = an.analyze(resp.t, resp.dT_pump, resp.dT_far, resp.P_abs, L_ROD, A_ROD, RHO_CP, spot_radius=cfg.laser.w,
+                         freqs=freqs, H_far=fr.H_far, fit_t_max=3e-3, shell=(R_CU, FUSED_SILICA))
+        k[outer] = an.k_eff_table(res)
+    assert k["far"]["tlm_shell"] == pytest.approx(COPPER.k, rel=0.03)
+    for m in ("tlm", "fin_fit"):                       # amplitude lost sideways reads as a lower k
+        assert all(k[b][m] < 0.98 * COPPER.k for b in k)
+    for m in ("step_intercept", "parker"):             # faster apparent rise reads as a higher k ...
+        assert all(k[b][m] > 1.02 * COPPER.k for b in ("far", "neighbor_sink"))
+        assert k["neighbor_adiabatic"][m] < COPPER.k   # ... unless a thin closed glass annulus acts as extra heat capacity
+    # the boundary matters for every method (the spread between the two neighbour bounds is the array sensitivity)
+    for m in ("step_intercept", "parker", "tlm", "tlm_shell"):
+        assert k["neighbor_sink"][m] != pytest.approx(k["neighbor_adiabatic"][m], rel=0.005)
