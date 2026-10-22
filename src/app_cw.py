@@ -36,8 +36,10 @@ OUTER_OPTIONS = {"far": "far — 무한 유리 (기본: 이웃 비아를 고려�
                  "neighbor_adiabatic": "이웃 비아 대칭 셀 (r = pitch/2 단열, 상한 — 비물리적 DC)"}
 VIEWS = ["신호", "분석", "락인", "온도장", "검증"]
 # legends go below the x-axis title (a legend inside the bottom margin overlaps "t [ms]")
-LEGEND_BELOW = dict(orientation="h", yanchor="top", y=-0.28, xanchor="left", x=0.0)
-MARGIN_BELOW = dict(l=50, r=20, t=50, b=110)
+# y is in plot-area units: with height 420 and these margins the plot area is ~230 px, so -0.42 puts the legend
+# ~95 px under it, clear of tick labels (~25 px) and the axis title (~45 px) at any browser zoom; two legend rows fit in b
+LEGEND_BELOW = dict(orientation="h", yanchor="top", y=-0.42, xanchor="left", x=0.0)
+MARGIN_BELOW = dict(l=50, r=20, t=50, b=140)
 INDICATORS = ["step_intercept", "parker", "two_face"]
 IND_LABEL = {"step_intercept": "스텝 절편 t_int", "parker": "Parker 반상승 t½", "two_face": "양면 온도차 R_th(t*)"}
 # Widgets that exist only for some settings get their default as `value`, not as a session-state seed: a keyed
