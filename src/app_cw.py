@@ -35,6 +35,18 @@ OUTER_OPTIONS = {"far": "far — 무한 유리 (기본: 이웃 비아를 고려�
                  "neighbor_sink": "이웃 비아 = 완전 싱크 (r = pitch − R_cu 등온, 하한)",
                  "neighbor_adiabatic": "이웃 비아 대칭 셀 (r = pitch/2 단열, 상한 — 비물리적 DC)"}
 VIEWS = ["신호", "분석", "락인", "온도장", "검증"]
+LINEAR_LIMIT_HELP = (
+    "**선형 한계 = 이 시뮬레이션을 믿을 수 있는 펌프 출력의 상한.**\n\n"
+    "시뮬레이터는 물성이 온도에 따라 변하지 않는 선형 열방정식을 풉니다. 출력을 2배로 올리면 모든 온도 상승이 정확히 2배가 되고, "
+    "스텝 응답 하나에서 임펄스·chopping·락인 응답을 후처리로 얻는 것도 이 선형성 덕분입니다. 온도가 몇 K 이상 오르면 구리·유리의 물성과 "
+    "열반사 신호 ΔR/R 이 온도에 비례하지 않게 되어, 그 전까지만 모델과 실험이 같은 물리를 봅니다.\n\n"
+    "가장 뜨거운 곳은 펌프 스팟 바로 아래의 펌프면입니다 (스팟 5.5 µm → 스프레딩 저항 ≈ 115 K/W + 비아 축방향 저항). "
+    "떠 있는 기판에는 정상상태가 없어 이 온도는 계속 오르므로 **관측창 끝**에서 읽습니다. 창을 늘리면 같은 출력에서도 더 오릅니다.\n\n"
+    "ΔT_max 는 당신이 정한 허용 한계(기본 5 K)입니다. 온도가 출력에 비례하므로 "
+    "**최대 출력 P_max = P × ΔT_max / ΔT_pump(창 끝)** 이고, 설정 출력이 P_max 를 넘으면 경고합니다. 넘어도 계산은 되지만 선형 가정 밖입니다.\n\n"
+    "납품값 k_eff 는 위상만 쓰므로 출력 크기와 무관합니다. 선형 한계는 '신호가 모델대로 나오는가'의 조건이지 k_eff 계산식에 들어가지 않습니다. "
+    "실측에서 SNR 을 위해 출력을 올릴 때 이 값이 상한이 됩니다."
+)
 # legends go below the x-axis title (a legend inside the bottom margin overlaps "t [ms]")
 # y is in plot-area units: with height 420 and these margins the plot area is ~230 px, so -0.42 puts the legend
 # ~95 px under it, clear of tick labels (~25 px) and the axis title (~45 px) at any browser zoom; two legend rows fit in b
@@ -157,8 +169,7 @@ with st.sidebar:
                          "(반대면·납품값에는 거의 영향 없음). 주파수 영역 풀이는 등가 원형으로 유지됩니다.")
         if st.session_state.spot_3d:
             st.number_input("스팟 중심 정렬 오차 [μm] (x 방향)", 0.0, 40.0, value=spot_offset_um(), key="spot_offset_um", step=0.5, format="%.3g")
-        c1.number_input("선형 한계 ΔT_max [K] (펌프면, 창 끝)", 0.1, 100.0, key="dT_max", step=1.0, format="%.3g",
-                        help="관측창 끝의 펌프면 상승이 이 값 아래면 선형 영역으로 봅니다. 정상상태가 없어 ΔT 는 창 길이에 따라 커집니다.")
+        c1.number_input("선형 한계 ΔT_max [K] (펌프면, 창 끝)", 0.1, 100.0, key="dT_max", step=1.0, format="%.3g", help=LINEAR_LIMIT_HELP)
         a = spot_radius()
         P_abs = st.session_state.power_mW * 1e-3 * (1 - st.session_state.refl)
         q = P_abs / (math.pi * a ** 2)
@@ -251,9 +262,12 @@ P_max = rb.P_in * res["dT_max"] / rb.dT_pump[-1]
 # ---- header metrics
 c = st.columns(6)
 c[0].metric("흡수 출력", f"{rb.P_abs * 1e3:.3g} mW", f"입사 {rb.P_in * 1e3:.3g} mW")
-c[1].metric("펌프면 ΔT (창 끝)", f"{rb.dT_pump[-1]:.4g} K", f"한계 {res['dT_max']:.3g} K", delta_color="off")
+c[1].metric("펌프면 ΔT (창 끝)", f"{rb.dT_pump[-1]:.4g} K", f"한계 {res['dT_max']:.3g} K", delta_color="off",
+            help="펌프 스팟 아래 펌프면 프로브의 온도 상승, 관측창 끝 값 (가장 뜨거운 곳). 선형 한계 ΔT_max 와 비교합니다. " + LINEAR_LIMIT_HELP)
 c[2].metric("선형 한계 최대 출력", f"{P_max * 1e3:.3g} mW", f"{'초과' if rb.P_in > P_max else '여유'} ×{P_max / rb.P_in:.2f}",
-            delta_color="inverse" if rb.P_in > P_max else "normal")
+            delta_color="inverse" if rb.P_in > P_max else "normal",
+            help=f"P_max = P × ΔT_max / ΔT_pump(창 끝) = {rb.P_in * 1e3:.3g} mW × {res['dT_max']:.3g} K / {rb.dT_pump[-1]:.3g} K. "
+                 f"'여유 ×n' 은 설정 출력을 n 배까지 올릴 수 있다는 뜻, '초과' 는 이미 한계 밖이라는 뜻입니다. " + LINEAR_LIMIT_HELP)
 c[3].metric("반대면 ΔT (창 끝)", f"{rb.dT_far[-1]:.4g} K", f"양면 차 {rb.dT_diff[-1]:.4g} K", delta_color="off")
 c[4].metric("에너지 보존 오차", f"{rb.energy_error:.1e}")
 c[5].metric("격자 / 스텝 / 시간", f"{rb.result.n_cells:,} / {rb.result.n_steps}", f"{rb.result.wall_time:.1f} s + {base['fr'].wall_time:.1f} s"
