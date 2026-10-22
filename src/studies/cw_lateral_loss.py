@@ -24,6 +24,8 @@ from pathlib import Path
 import numpy as np
 
 SRC = Path(__file__).resolve().parents[1]
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")          # Windows console (cp949) cannot print the labels
 sys.path.insert(0, str(SRC))
 
 from ttr_sim import VoidSpec  # noqa: E402
@@ -44,10 +46,10 @@ VOIDS = {
     "void_r20": VoidSpec(enabled=True, depth=245 * UM, thickness=10 * UM, r_half=20 * UM, k=0.026),
     "void_r35": VoidSpec(enabled=True, depth=245 * UM, thickness=10 * UM, r_half=35 * UM, k=0.026),
 }
-METHODS = ["step_intercept", "parker", "two_face", "fin_fit", "tlm", "tlm_loss", "tlm_shell"]
+METHODS = ["tlm_shell", "tlm", "step_intercept", "parker"]        # k or apparent k (two-face has none: R_th only)
 LABELS = {
-    "step_intercept": "스텝 절편", "parker": "Parker 반상승", "two_face": "양면 온도차", "fin_fit": "핀 모델 피팅(G′)",
-    "tlm": "TLM(단열)", "tlm_loss": "TLM(G′)", "tlm_shell": "TLM(유리 껍질)",
+    "tlm_shell": "k_eff: TLM(유리 껍질, 위상)", "tlm": "TLM(단열 막대, 진폭+위상, 참고)", "step_intercept": "겉보기 α·ρc: 스텝 절편",
+    "parker": "겉보기 α·ρc: Parker", "two_face": "양면 온도차 R_th",
 }
 BOUNDARY_LABEL = {"far": "far (무한 유리)", "neighbor_sink": "이웃 싱크 (하한)", "neighbor_adiabatic": "이웃 단열 (상한)"}
 
@@ -59,7 +61,8 @@ def run_case(name: str, void, outer: str, gap_um: float | None) -> dict:
     resp = run_step_response(cfg, store_fields=False)
     fr = frequency_response(cfg, FREQS)
     res = an.analyze(resp.t, resp.dT_pump, resp.dT_far, resp.P_abs, L, A, COPPER.rho_cp, spot_radius=cfg.laser.w,
-                     freqs=FREQS, H_far=fr.H_far, fit_t_max=3e-3, shell=(R_CU, FUSED_SILICA))
+                     freqs=FREQS, H_far=fr.H_far, shell=(R_CU, FUSED_SILICA))
+    res["tlm"] = an.invert_tlm(FREQS, fr.H_far, COPPER.rho_cp, L, A, use="both")   # adiabatic-rod TLM (amplitude + phase), reference
     k = an.k_eff_table(res)
     lk = an.lockin(fr.H_far, fr.P_abs)
     row = dict(case=name, boundary=outer, gap_um=(gap_um if gap_um is not None else ""), pitch_um=(pitch / UM if pitch else ""),
@@ -69,7 +72,7 @@ def run_case(name: str, void, outer: str, gap_um: float | None) -> dict:
                E_out_frac=float(resp.E_out[-1] / resp.E_in[-1]), energy_error=resp.energy_error,
                t_int_ms=res["step_intercept"]["t_int"] * 1e3, t_half_ms=res["parker"]["t_half"] * 1e3,
                rho_cp_eff_ratio=res["step_intercept"]["rho_cp_eff"] / COPPER.rho_cp,
-               R_th=res["two_face"]["R_th"], G_prime_fin=res["fin_fit"]["G_prime"], G_prime_tlm=res["tlm_loss"]["G_prime"],
+               R_th=res["two_face"]["R_th"],
                wall_s=time.perf_counter() - t0, n_cells=resp.result.n_cells, n_steps=resp.result.n_steps,
                warnings="; ".join(resp.warnings))
     for m in METHODS:
@@ -120,23 +123,24 @@ def write_summary(rows):
              f"플랫 스팟 a = 5.5 µm, 프로브 4 µm 양면, 관측창 {T_END * 1e3:.0f} ms, 주파수 {FREQS[0]:g}–{FREQS[-1]:g} Hz.",
              "외곽 경계: far = 자동 반경의 단열 유리 껍질, 이웃 싱크 = r = pitch − R_cu 등온(실온), 이웃 단열 = r = pitch/2 단열. "
              "pitch = 80 µm + 유리 간격.", "",
-             "## 1. 기준(void 없음) via 에서 각 방법의 k_eff [W/mK] (참값 398)", "",
-             "| 경계 | 간격 [µm] | " + " | ".join(LABELS[m] for m in METHODS) + " | ΔT_far(20 ms) [K] | ΔT_pump-ΔT_far [K] | 싱크 방출 |",
+             "## 1. 기준(void 없음) via: 납품값 k_eff 와 지표들의 겉보기 값 [W/mK] (참값 398)", "",
+             "| 경계 | 간격 [µm] | " + " | ".join(LABELS[m] for m in METHODS) + " | R_th(20 ms) [K/W] | ΔT_far(20 ms) [K] | 싱크 방출 |",
              "|---|---|" + "---|" * len(METHODS) + "---|---|---|"]
     for r in rows:
         if r["case"] != "baseline":
             continue
         cells = " | ".join(f"{r[f'k_{m}']:.0f} ({(r[f'k_{m}'] / COPPER.k - 1) * 100:+.0f} %)" for m in METHODS)
-        lines.append(f"| {BOUNDARY_LABEL[r['boundary']]} | {r['gap_um'] or '—'} | {cells} | {r['dT_far_end']:.3f} | {r['dT_diff_end']:.3f} | {r['E_out_frac'] * 100:.0f} % |")
+        lines.append(f"| {BOUNDARY_LABEL[r['boundary']]} | {r['gap_um'] or '—'} | {cells} | {r['R_th']:.0f} | {r['dT_far_end']:.3f} | {r['E_out_frac'] * 100:.0f} % |")
     lines += ["", "## 2. void 에 의한 k_eff 변화 Δk/k [%] (같은 경계의 기준 대비)", "",
               "void: 축 위 원판, 깊이 245–255 µm (로드 중앙), 두께 10 µm, 공기. r_half 20 µm (단면 25 %) / 35 µm (단면 77 %).", "",
-              "| void | 경계 | 간격 [µm] | " + " | ".join(LABELS[m] for m in METHODS) + " | ΔT_far(20 ms) 변화 | 락인 100 Hz 진폭 변화 | 락인 1 kHz 위상 변화 [°] |",
-              "|---|---|---|" + "---|" * len(METHODS) + "---|---|---|"]
+              "| void | 경계 | 간격 [µm] | " + " | ".join(LABELS[m] for m in METHODS) + " | ΔR_th/R_th | ΔT_far(20 ms) 변화 | 락인 100 Hz 진폭 변화 | 락인 1 kHz 위상 변화 [°] |",
+              "|---|---|---|" + "---|" * len(METHODS) + "---|---|---|---|"]
     for r in rows:
         if r["case"] == "baseline":
             continue
         b = base[_key(r)]
         cells = " | ".join(f"{(r[f'k_{m}'] / b[f'k_{m}'] - 1) * 100:+.1f}" for m in METHODS)
+        cells += f" | {(r['R_th'] / b['R_th'] - 1) * 100:+.1f}"
         lines.append(f"| {r['case']} | {BOUNDARY_LABEL[r['boundary']]} | {r['gap_um'] or '—'} | {cells} | "
                      f"{(r['dT_far_end'] / b['dT_far_end'] - 1) * 100:+.1f} % | "
                      f"{(r['lockin_amp_uK_100Hz'] / b['lockin_amp_uK_100Hz'] - 1) * 100:+.1f} % | "
@@ -149,20 +153,22 @@ def write_summary(rows):
         cells = " | ".join(f"{abs(a[f'k_{m}'] - s[f'k_{m}']) / COPPER.k * 100:.0f} %" for m in METHODS)
         lines.append(f"| {gap} | {cells} |")
     lines += ["", "## 4. 읽는 법", "",
-              "* 손실 없는 모델(스텝 절편, Parker, 단열 TLM, 핀 모델)은 유리로 새는 열 때문에 체계적으로 편향된다. "
-              "편향의 방향: 절편·Parker 는 겉보기 상승이 빨라져 k 를 **높게**, TLM(단열)·핀 모델은 진폭이 줄어 k 를 **낮게** 읽는다.",
+              "* 납품값은 위상 기반 유리 껍질 TLM 역산의 k_eff 하나다. 나머지(스텝 절편, Parker, 양면 온도차)는 같은 이웃의 기준 via 와 비교하는 "
+              "상대 void 지표이며, 절대값(겉보기 α·ρc)은 유리로 새는 열 때문에 체계적으로 편향된다: 절편·Parker 는 겉보기 상승이 빨라져 **높게**, "
+              "단열 TLM 은 진폭이 줄어 **낮게** 읽는다 (결정 2026-10-22: 핀 모델은 제거, 양면 온도차는 k_eff 를 내지 않음).",
               "* 유리 껍질 어드미턴스 TLM 모델(실린더 주위 무한 유리 해석해)은 모든 경계·피치에서 참값의 ±2 % 안에 든다: "
               "락인 주파수(10 Hz 이상)의 유리 침투 깊이가 이웃까지의 간격과 비슷하거나 짧아 경계가 거의 보이지 않기 때문이다. "
               "유일하게 배열 정보 없이 쓸 수 있는 방법이다.",
               "* 간격 50 µm 의 이웃 단열 셀에서는 얇은 유리 고리가 빨리 포화되어 병렬 열용량처럼 작용 → 절편·Parker 의 편향 부호가 뒤집힌다 "
               "(절편 −27 %, Parker −5 %). 폐쇄 경계의 DC 는 무한히 올라가므로(ΔT_far 5 K) 이 경계는 상한일 뿐 물리적 값이 아니다.",
-              "* void 에 의한 Δk 는 양면 온도차를 제외한 모든 방법에서 거의 같다(r_half 20 µm: −1.5 %, 35 µm: −8.6 %)이고 경계에 둔감하다: "
-              "void 는 축방향 직렬 저항으로 작용하고 측면 손실 편향은 대부분 상쇄된다. 양면 온도차는 준정상 L/(2kA) 항만 보므로 절반만 읽는다.",
-              "* 양면 온도차는 단열 로드에서 정상상태가 없어 R_th 가 L/(2kA)+스프레딩 저항으로 수렴한다 (k_eff = L/(R_th A) 는 두 편향이 상쇄된 값).",
+              "* void 에 의한 변화는 납품값과 과도응답 지표에서 거의 같고(r_half 20 µm: −1.5 %, 35 µm: −8.6 %) 경계에 둔감하다: "
+              "void 는 축방향 직렬 저항으로 작용하고 측면 손실 편향은 대부분 상쇄된다. 양면 온도차 R_th 는 로드 중앙 void 에 대해 약 절반만 반응한다: "
+              "이 지표의 감도는 void 평면을 지나는 flux ∝ 1 − z/L 로 펌프면에서 반대면으로 갈수록 선형으로 줄어든다.",
+              "* 양면 온도차는 단열 로드에서 정상상태가 없어 R_th 가 L/(2kA)+스프레딩 저항으로 수렴한다 (통과 흐름의 L/(kA) 가 아님).",
               "* §3 의 폭이 '측정값이 via 가 아니라 배열(이웃)에 얼마나 지배되는가' 의 지표다. "
               "폭이 작은 방법이 배열 정보 없이 쓸 수 있는 방법이다.",
-              "* 스펙 §3 의 '방법 간 불일치 = void 지표' 는 여기서 양면 온도차 ↔ 나머지 방법의 차이로 나타난다 "
-              "(α·ρc 로 읽는 방법은 void 를 온전히, R_th 로 읽는 방법은 절반만 본다)."]
+              "* 스펙 §3 의 '방법 간 불일치 = void 지표' 는 여기서 양면 온도차 ↔ 과도응답 지표의 차이로 나타난다 "
+              "(α 로 읽는 지표는 void 를 깊이와 무관하게, R_th 는 깊이에 비례해 줄어든 만큼만 본다)."]
     (OUT / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

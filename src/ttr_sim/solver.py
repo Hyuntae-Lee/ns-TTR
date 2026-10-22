@@ -135,6 +135,26 @@ class Laser:
     mode: str = "pulse"          # "pulse": energy / tau_p pulse (default, unchanged) | "cw": continuous wave step
     power: float = 0.0           # incident CW power, W (mode == "cw")
     probe_w_far: Optional[float] = None   # probe 1/e^2 radius on the far face z = L, m (None: same as probe_w)
+    # Non-axisymmetric flat spot (3-D solver only): ellipse with semi-axes w (along x, theta = 0) and w_b (along y),
+    # centre displaced by x_offset along x.  None / 0 = the circular, centred spot of the 2-D solver.
+    w_b: Optional[float] = None  # semi-axis along y of a flat elliptical spot, m (None: circular, w_b = w)
+    x_offset: float = 0.0        # spot centre offset along x (alignment error), m
+
+    @property
+    def is_elliptical(self) -> bool:
+        return self.w_b is not None and abs(self.w_b - self.w) > 1e-12 * self.w
+
+    @property
+    def is_offset(self) -> bool:
+        return abs(self.x_offset) > 0.0
+
+    @property
+    def axisymmetric(self) -> bool:
+        return not (self.is_elliptical or self.is_offset)
+
+    @property
+    def w_b_eff(self) -> float:
+        return self.w if self.w_b is None else self.w_b
 
     @property
     def is_cw(self) -> bool:
@@ -146,8 +166,10 @@ class Laser:
 
     @property
     def beam_area(self) -> float:
-        """Integral of the spatial profile g(r) (peak 1) over the whole plane, m^2."""
-        return math.pi * self.w ** 2 if self.beam == "flat" else 0.5 * math.pi * self.w ** 2
+        """Integral of the spatial profile g(r) (peak 1) over the whole plane, m^2 (ellipse: pi w w_b)."""
+        if self.beam == "flat":
+            return math.pi * self.w ** 2 if self.w_b is None else math.pi * self.w * self.w_b
+        return 0.5 * math.pi * self.w ** 2
 
     @property
     def I0(self) -> float:
@@ -240,6 +262,7 @@ class Numerics:
     void_cells: int = 8          # minimum cells across the void thickness, radial half-width and angular width
     far_layer: float = 0.0       # thickness of a uniform zone (spacing dz) against the far face z = L, m (0: off;
                                  # used when the far-face probe matters, i.e. CW transmission)
+    spot_theta_cells: int = 12   # azimuthal sectors over the half circle for a non-axisymmetric spot without voids (3-D; 24 changes nothing)
     theta_max: float = math.pi / 12   # coarsest azimuthal spacing away from the void (3-D runs)
     max_cells: int = 600_000
     max_steps: int = 400_000

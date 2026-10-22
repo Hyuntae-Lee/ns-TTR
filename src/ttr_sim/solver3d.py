@@ -49,13 +49,15 @@ TWO_PI = 2.0 * math.pi
 
 
 def needs_3d(cfg: SimConfig) -> bool:
-    """3-D is required as soon as one void is displaced from the axis (several on-axis voids stay 2-D)."""
-    return any(v.r_center > 0.0 for v in cfg.voids)
+    """3-D is required as soon as one void is displaced from the axis (several on-axis voids stay 2-D), or the
+    pump spot is not axisymmetric (elliptical / off-centre flat spot)."""
+    return any(v.r_center > 0.0 for v in cfg.voids) or not cfg.laser.axisymmetric
 
 
 def full_circle(cfg: SimConfig) -> bool:
     """Full 0..2 pi domain: more than one void, or a void away from the theta = 0 half-plane.  A single
-    void at theta = 0 keeps the mirror-symmetric half cylinder."""
+    void at theta = 0 keeps the mirror-symmetric half cylinder; so does a non-axisymmetric spot, whose
+    ellipse axes and offset lie along x (theta = 0)."""
     voids = cfg.voids
     if len(voids) > 1:
         return True
@@ -110,8 +112,13 @@ def theta_faces(cfg: SimConfig) -> np.ndarray:
     Half cylinder [0, pi] (single void at theta = 0): uniform fine zone over the void's angular extent
     (>= void_cells cells across the full width, plus a margin), then geometric growth up to theta_max.
     Full circle [0, 2 pi] (several voids / other azimuths): one fine zone per void around its centre
-    (wrapped at 2 pi), graded transitions between them, theta_max elsewhere."""
+    (wrapped at 2 pi), graded transitions between them, theta_max elsewhere.
+    A non-axisymmetric spot without any void: uniform spacing theta_max over the half cylinder (the spot's
+    shape is resolved by `spot_theta_cells` sectors, 24 over the half circle by default)."""
     n = cfg.numerics
+    if not cfg.laser.axisymmetric and not cfg.voids:
+        n_sec = max(2, int(n.spot_theta_cells))
+        return np.linspace(0.0, math.pi, n_sec + 1)
     if not full_circle(cfg):
         half = void_angular_halfwidth(cfg.void)
         d_fine = min(2.0 * half / n.void_cells, n.theta_max)
@@ -143,6 +150,36 @@ def theta_faces(cfg: SimConfig) -> np.ndarray:
     faces = _zoned_axis(zones, TWO_PI, n.stretch)
     faces[-1] = TWO_PI
     return faces
+
+
+def spot_sector_weights(grid, th_faces: np.ndarray, laser, r_cut: float, n_sub: int = 12) -> np.ndarray:
+    """Area (m^2) of each (annulus i, sector j) cell face covered by the flat spot, shape (nr, nth): the ellipse
+    ((x - x0) / w)^2 + (y / w_b)^2 <= 1 clipped at r_cut, integrated by n_sub x n_sub midpoint sub-cells in
+    (r^2, theta) (exact area weights; sub-cells only where the ellipse edge can pass).  Circular centred spots
+    reproduce `beam_annulus_weights` times dtheta / (2 pi) to the quadrature accuracy."""
+    rf, nth = grid.r_faces, len(th_faces) - 1
+    a, b, x0 = laser.w, laser.w_b_eff, laser.x_offset
+    r_in, r_out = max(0.0, min(a, b) - abs(x0)), max(a, b) + abs(x0)        # ellipse lies within this annulus
+    W = np.zeros((grid.nr, nth))
+    u = (np.arange(n_sub) + 0.5) / n_sub
+    for i in range(grid.nr):
+        ra, rb = rf[i], min(rf[i + 1], r_cut)
+        if rb <= ra:
+            continue
+        if rb <= r_in:                                        # whole annulus inside the ellipse
+            W[i, :] = 0.5 * (rb ** 2 - ra ** 2) * np.diff(th_faces)
+            continue
+        if ra >= r_out:
+            break
+        r2 = ra ** 2 + (rb ** 2 - ra ** 2) * u                 # midpoints uniform in r^2 (equal-area sub-annuli)
+        r = np.sqrt(r2)
+        for j in range(nth):
+            th = th_faces[j] + (th_faces[j + 1] - th_faces[j]) * u
+            x = r[:, None] * np.cos(th)[None, :] - x0
+            y = r[:, None] * np.sin(th)[None, :]
+            inside = (x / a) ** 2 + (y / b) ** 2 <= 1.0
+            W[i, j] = 0.5 * (rb ** 2 - ra ** 2) * (th_faces[j + 1] - th_faces[j]) * inside.mean()
+    return W
 
 
 def material_map_3d(cfg: SimConfig, grid, th_faces: np.ndarray) -> np.ndarray:
@@ -381,12 +418,21 @@ def run_simulation_3d(
     times = cfg.time_grid()
     dts = np.diff(times)
 
-    # laser source on the top faces of copper cells: axisymmetric beam, per-sector fraction dtheta/(2 pi)
+    # laser source on the top faces of copper cells: axisymmetric beam, per-sector fraction dtheta/(2 pi), or the
+    # elliptical / off-centre flat spot integrated per (annulus, sector) cell
     la = cfg.laser
     q_abs = la.I0 * (1.0 - la.reflectivity)
-    W_ann = beam_annulus_weights(grid.r_faces, la, cfg.geometry.R_cu)                             # (nr,)
     src3 = np.zeros((nz, nr, nth))
-    src3[0] = q_abs * W_ann[:, None] * dth[None, :] / (2.0 * math.pi)
+    if la.axisymmetric:
+        W_ann = beam_annulus_weights(grid.r_faces, la, cfg.geometry.R_cu)                         # (nr,)
+        src3[0] = q_abs * W_ann[:, None] * dth[None, :] / (2.0 * math.pi)
+        W_total = float(W_ann.sum())
+    else:
+        if la.beam != "flat":
+            raise NotImplementedError("elliptical / off-centre spots are implemented for the flat-top beam only")
+        W_sec = spot_sector_weights(grid, th_f, la, cfg.geometry.R_cu)                             # (nr, nth), half or full circle
+        src3[0] = q_abs * W_sec
+        W_total = sym * float(W_sec.sum())
     src3[0][mat[0] != MAT_COPPER] = 0.0
     src = src3.ravel()
     src_total = src.sum()
@@ -400,6 +446,27 @@ def run_simulation_3d(
     else:
         pw = gaussian_annulus_weights(grid.r_faces, la.probe_w, cfg.geometry.R_cu)[:, None] * dth[None, :]
     pw = pw / pw.sum()
+    if la.probe_w_far_eff <= 0:
+        pw_far = np.zeros((nr, nth))
+        pw_far[0, :] = 1.0
+    else:
+        pw_far = gaussian_annulus_weights(grid.r_faces, la.probe_w_far_eff, cfg.geometry.R_cu)[:, None] * dth[None, :]
+    pw_far = pw_far / pw_far.sum()
+    # far face z = L of the rod (same reconstruction as the 2-D solver: flux leaving the last rod row through
+    # that face; zero for the adiabatic face, the sink flux for an isothermal face, the link flux under a stack)
+    j_L = min(max(int(np.searchsorted(grid.z_faces, cfg.geometry.L, side="left")) - 1, 0), nz - 1)
+    d_far = grid.z_faces[j_L + 1] - grid.z_c[j_L]
+    r_extra = interface_resistance(cfg, grid)
+    if j_L == nz - 1:
+        g_far = (g_sink.reshape(nz, nr, nth)[-1] / A_z_cell[0]) if g_sink.any() else np.zeros((nr, nth))
+
+        def far_face(T3):
+            return T3[j_L] - g_far * T3[j_L] * d_far / k3[j_L]
+    else:
+        R_far = d_far / k3[j_L] + (grid.z_c[j_L + 1] - grid.z_faces[j_L + 1]) / k3[j_L + 1] + r_extra[j_L]
+
+        def far_face(T3):
+            return T3[j_L] - (T3[j_L] - T3[j_L + 1]) / R_far * d_far / k3[j_L]
 
     n_steps = len(times) - 1
     pulse = la.f(times)
@@ -408,6 +475,8 @@ def run_simulation_3d(
     T = np.zeros(N)                                              # temperature rise
     T_surface = np.empty((n_steps + 1, 2 * nr))                  # plane through the void: x<0 (theta=pi) | x>0 (theta=0)
     T_probe = np.empty(n_steps + 1)
+    T_far = np.empty((n_steps + 1, 2 * nr))
+    T_probe_far = np.empty(n_steps + 1)
     T_axis = np.empty((n_steps + 1, nz))
     E_in = np.zeros(n_steps + 1)
     E_stored = np.zeros(n_steps + 1)
@@ -424,6 +493,9 @@ def run_simulation_3d(
         Ts = T3[0] + face_corr * pulse[n]                        # (nr, nth) surface rise
         T_surface[n] = np.concatenate([Ts[::-1, m_pi], Ts[:, 0]]) + T0
         T_probe[n] = float((pw * Ts).sum()) + T0
+        Tf = far_face(T3)
+        T_far[n] = np.concatenate([Tf[::-1, m_pi], Tf[:, 0]]) + T0
+        T_probe_far[n] = float((pw_far * Tf).sum()) + T0
         T_axis[n] = T3[:, 0, 0] + T0
         E_stored[n] = sym * float(C @ T)
         if n in snap_idx:
@@ -463,7 +535,7 @@ def run_simulation_3d(
     diag.update(
         n_cells=N, nr=nr, nz=nz, n_theta=nth, dtheta_min=float(dth.min()), dtheta_max=float(dth.max()),
         absorbed_energy=float(E_in[-1]), n_factorisations=n_factor,
-        absorbed_fraction_in_rod=float(W_ann.sum() / la.beam_area),
+        absorbed_fraction_in_rod=float(W_total / la.beam_area),
         solver=" / ".join(sorted(kinds)) if kinds else SOLVER_DIRECT, full_circle=periodic,
         mean_iterations=float(np.mean(iters)) if iters else 0.0,
     )
@@ -472,4 +544,5 @@ def run_simulation_3d(
         config=cfg, grid=grid, material=mat_plane, times=times, T_surface=T_surface, T_probe=T_probe,
         T_axis=T_axis, snapshots=snapshots, E_in=E_in, E_stored=E_stored, pulse=pulse,
         wall_time=time.perf_counter() - t_start, diagnostics=diag, is_3d=True, n_theta=nth, E_out=E_out,
+        T_far=T_far, T_probe_far=T_probe_far,
     )

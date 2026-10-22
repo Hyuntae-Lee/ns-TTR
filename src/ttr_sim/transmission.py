@@ -41,6 +41,7 @@ from .solver import (
     assemble_laplacian, beam_annulus_weights, build_grid, far_face_reconstructor, interface_resistance, material_map,
     probe_weights, run_simulation, sink_conductances,
 )
+from .solver3d import needs_3d, run_simulation_3d
 
 PUMP_SPOT_RADIUS = math.sqrt(6e-6 * 5e-6)   # equivalent circular radius of the flat 12 x 10 um elliptical spot, m
 PROBE_RADIUS = 4e-6                         # 1/e^2 radius of the 8 um probe spots, m
@@ -61,6 +62,8 @@ def cw_config(
     L: float = 500e-6,
     R_cu: float = 40e-6,
     pump_radius: float = PUMP_SPOT_RADIUS,
+    spot_axes: Optional[tuple] = None,
+    spot_offset: float = 0.0,
     probe_w: float = PROBE_RADIUS,
     t_end: float = DEFAULT_WINDOW,
     void: Optional[VoidSpec] = None,
@@ -68,6 +71,7 @@ def cw_config(
     outer: str = "far",
     pitch: Optional[float] = None,
     R_out: Optional[float] = None,
+    f_min: Optional[float] = None,
     homogeneous_copper: bool = False,
     dz: float = 2.5e-6,
     far_layer: Optional[float] = None,
@@ -84,6 +88,11 @@ def cw_config(
     None gives the void-free baseline.  `outer` selects the boundary at the outer radius (module docstring);
     the neighbour options need the via `pitch`.  `R_out` overrides the automatic outer radius of "far"
     (R_out = R_cu: no silica at all, an adiabatic rod side, used by the 1-D analytic checks).
+    `f_min` (lowest lock-in frequency, Hz) widens the automatic "far" shell to at least 3 glass thermal
+    penetration depths sqrt(alpha_g / (pi f_min)) so the frequency-domain solve does not see the boundary.
+    `spot_axes` = (diameter along x, diameter along y) replaces the equivalent circular spot by the true flat
+    ellipse and `spot_offset` displaces its centre along x (alignment error); either makes the step response
+    run in the 3-D solver (spec step 7; the frequency-domain solve stays axisymmetric).
     `**numerics` are forwarded to `Numerics`.
     """
     if outer not in OUTER_OPTIONS:
@@ -97,14 +106,21 @@ def cw_config(
         if pitch is None or pitch <= 2.0 * R_cu:
             raise ValueError("neighbor_adiabatic needs pitch > 2 R_cu")
         R_out = 0.5 * pitch
+    elif R_out is None and f_min is not None and f_min > 0:
+        shell_mat = copper if homogeneous_copper else silica
+        R_auto = R_cu + max(2.0 * R_cu, 4.0 * math.sqrt(shell_mat.alpha * t_end))     # build_grid's automatic shell
+        R_out = max(R_auto, R_cu + 3.0 * penetration_depth(f_min, shell_mat))
     if power <= 0:
         raise ValueError("power must be positive")
     if t_end <= 0:
         raise ValueError("t_end must be positive")
+    w_b = None
+    if spot_axes is not None:
+        pump_radius, w_b = 0.5 * float(spot_axes[0]), 0.5 * float(spot_axes[1])
     laser = Laser(
-        tau_p=pump_radius ** 2 / copper.alpha,     # grid surface layer = 10 spot radii (see module docstring)
+        tau_p=max(pump_radius, w_b or 0.0) ** 2 / copper.alpha,     # grid surface layer = 10 spot radii (module docstring)
         profile="square", mode="cw", power=power,
-        w=pump_radius, beam="flat", reflectivity=reflectivity,
+        w=pump_radius, w_b=w_b, x_offset=float(spot_offset), beam="flat", reflectivity=reflectivity,
         probe_w=probe_w, probe_w_far=probe_w, c_tr=c_tr,
     )
     num = Numerics(
@@ -160,6 +176,11 @@ class StepResponse:
         return self.result.diagnostics
 
 
+def penetration_depth(f: float, mat: Material = FUSED_SILICA) -> float:
+    """Thermal penetration depth sqrt(alpha / (pi f)) of a harmonic at f [Hz], m."""
+    return math.sqrt(mat.alpha / (math.pi * f))
+
+
 def outer_radius(cfg: SimConfig) -> float:
     """Outer radius of the computational domain actually used (automatic shell or `Geometry.R_out`)."""
     return float(build_grid(cfg).r_faces[-1])
@@ -174,7 +195,10 @@ def run_step_response(cfg: SimConfig, progress: Optional[Callable[[float], None]
     """Run the CW step response and return both probe signals with the absorbed power and the energy balance."""
     if not cfg.laser.is_cw:
         raise ValueError("run_step_response needs a CW laser (Laser.mode == 'cw'); use cw_config()")
-    res = run_simulation(cfg, progress=progress, store_fields=store_fields)
+    if needs_3d(cfg):
+        res = run_simulation_3d(cfg, progress=progress, store_fields=store_fields)
+    else:
+        res = run_simulation(cfg, progress=progress, store_fields=store_fields)
     la = cfg.laser
     P_abs = la.power * (1.0 - la.reflectivity) * res.diagnostics["absorbed_fraction_in_rod"]
     warnings = list(res.diagnostics.get("warnings", []))
@@ -241,6 +265,7 @@ class FrequencyResponse:
     P_abs: float                  # absorbed power of the configuration, W (for lock-in amplitudes)
     n_cells: int
     wall_time: float
+    warnings: list = field(default_factory=list)
 
     @property
     def amplitude_far(self) -> np.ndarray:
@@ -257,6 +282,10 @@ def frequency_response(cfg: SimConfig, freqs, progress: Optional[Callable[[float
     far-face reconstructor; both are probe-weighted.  Exact for the discretised system, so it cross-checks
     the time integrator (step response -> FFT) and gives lock-in amplitude / phase without any transient."""
     t_start = time.perf_counter()
+    if any(v.r_center > 0.0 for v in cfg.voids):
+        raise NotImplementedError("the frequency-domain solve is axisymmetric: off-axis voids need the step-response FFT route")
+    if not cfg.laser.axisymmetric:
+        cfg = replace(cfg, laser=replace(cfg.laser, w=math.sqrt(cfg.laser.w * cfg.laser.w_b_eff), w_b=None, x_offset=0.0))
     grid = build_grid(cfg)
     mat = material_map(cfg, grid)
     k, rho_cp = _property_arrays(cfg, mat)
@@ -291,5 +320,53 @@ def frequency_response(cfg: SimConfig, freqs, progress: Optional[Callable[[float
         H_far[i] = (pw_far @ far_face(T2)) / P_abs
         if progress is not None:
             progress((i + 1) / len(freqs))
+    warnings = []
+    shell = float(grid.r_faces[-1]) - cfg.geometry.R_cu
+    if shell > 0 and cfg.geometry.outer_bc == "adiabatic" and len(freqs):
+        mu = penetration_depth(float(freqs.min()), cfg.copper if cfg.geometry.homogeneous_copper else cfg.silica)
+        if shell < 3.0 * mu:
+            warnings.append(
+                f"최저 주파수 {freqs.min():g} Hz 의 유리 침투 깊이 {mu * 1e6:.0f} μm 의 3배가 껍질 두께 {shell * 1e6:.0f} μm 를 넘습니다. "
+                "저주파 락인 값이 외곽 경계의 영향을 받습니다 (cw_config(f_min=...) 로 껍질을 넓히세요)."
+            )
     return FrequencyResponse(freqs=freqs, H_pump=H_pump, H_far=H_far, P_abs=P_abs, n_cells=N,
-                             wall_time=time.perf_counter() - t_start)
+                             wall_time=time.perf_counter() - t_start, warnings=warnings)
+
+
+# ----------------------------------------------------------------------------- lock-in dataset (decision 7)
+@dataclass
+class LockinDataset:
+    """Far-face (and pump-face) frequency response assembled for the analysis: the step-response FFT where the
+    window resolves the frequency (f >= f_switch), the direct frequency-domain solve below it.  `source` says
+    which per frequency.  Either path alone is also valid input to `analysis.invert_tlm`."""
+    freqs: np.ndarray
+    H_far: np.ndarray
+    H_pump: np.ndarray
+    source: np.ndarray            # "step_fft" | "direct" per frequency
+    f_switch: float
+    P_abs: float
+
+
+def lockin_dataset(resp: StepResponse, fr: Optional[FrequencyResponse], freqs=None, f_switch: Optional[float] = None,
+                   prefer: str = "auto") -> LockinDataset:
+    """Combine the two routes to the lock-in data.  `f_switch` defaults to 1 / t_end (below it the step
+    transient of the window cannot resolve the harmonic).  `prefer` = "auto" (switch by frequency), "step_fft"
+    (transient only, e.g. a 3-D run without a frequency solve) or "direct" (frequency solve only)."""
+    from .analysis import frequency_response_from_step
+    if freqs is None:
+        freqs = fr.freqs if fr is not None else np.array([])
+    freqs = np.atleast_1d(np.asarray(freqs, float))
+    t_end = float(resp.t[-1])
+    f_switch = 1.0 / t_end if f_switch is None else float(f_switch)
+    Hs_far = frequency_response_from_step(resp.t, resp.dT_far, freqs, resp.P_abs)
+    Hs_pump = frequency_response_from_step(resp.t, resp.dT_pump, freqs, resp.P_abs)
+    if prefer == "step_fft" or fr is None:
+        src = np.full(len(freqs), "step_fft")
+        return LockinDataset(freqs, Hs_far, Hs_pump, src, f_switch, resp.P_abs)
+    if not np.allclose(fr.freqs, freqs):
+        raise ValueError("the frequency response was computed for other frequencies")
+    use_direct = np.ones(len(freqs), bool) if prefer == "direct" else (freqs < f_switch)
+    H_far = np.where(use_direct, fr.H_far, Hs_far)
+    H_pump = np.where(use_direct, fr.H_pump, Hs_pump)
+    src = np.where(use_direct, "direct", "step_fft")
+    return LockinDataset(freqs, H_far, H_pump, src, f_switch, resp.P_abs)

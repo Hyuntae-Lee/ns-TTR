@@ -10,19 +10,26 @@ Conventions
 * Frequency responses H(omega) are complex temperature amplitudes per unit absorbed power amplitude [K/W],
   convention dT(t) = Re(H e^{i omega t}) for P(t) = Re(e^{i omega t}): phase = arg H <= 0 (lag).
 
-Methods
--------
-step_intercept        linear asymptote of dT_far -> t_int -> alpha = L^2 / (6 t_int)   (CW-step Parker)
-parker                impulse response d dT_far/dt -> half-rise time -> alpha = 0.1388 L^2 / t_half
-two_face_resistance   (dT_pump - dT_far) / P_abs = R_th(t) -> k_eff = L / (R_th A)   (optionally minus the
-                      pump-spot spreading resistance).  NB: an adiabatic rod has no steady state; its
-                      quasi-steady face difference is P L / (2 k A), so this k_eff drifts with t (spec §3).
-fit_fin_model         least squares of the 1-D fin model (k_eff, lateral loss G') to the far-face curve
-frequency_response_from_step   H(omega) from the step response (LTI: H = FT{d s/dt})
-lockin                amplitude / phase of the lock-in fundamental for a square-chopped pump
-tlm_response          1-D transmission-line (ABCD) response of a rod with uniform lateral loss
-invert_tlm            k_eff (and G') from measured H_far(omega) by least squares on the TLM
-analyze / compare     all methods at once, and the baseline-vs-void differences
+Deliverable (absolute k_eff)
+----------------------------
+invert_tlm(..., shell=(R_cu, silica))   phase-based least squares of the rod-in-glass transmission line
+    (`tlm_response` with `lateral_admittance`) to the far-face frequency response.  Phase only, so the
+    result does not depend on the reflectivity (absorbed power) or on the thermoreflectance coefficient.
+    The frequency response may come from lock-in data or from a recorded step transient converted with
+    `frequency_response_from_step`; both give the same k_eff (tests/test_cw.py).
+phase_noise_sensitivity   Monte-Carlo spread / bias of that k_eff for a given phase noise (lock-in requirement).
+
+Void indicators (relative to a reference via in the same neighbourhood, never an absolute k)
+-------------------------------------------------------------------------------------------
+step_intercept        linear asymptote of dT_far -> t_int (-> apparent alpha = L^2 / (6 t_int))
+parker                impulse response d dT_far/dt -> half-rise time (-> apparent alpha = 0.1388 L^2 / t_half)
+two_face_resistance   R_th(t) = (dT_pump - dT_far) / P_abs; a void changes R_th(t*).  No k_eff: the adiabatic rod
+                      has no steady state (quasi-steady difference P L / (2 k A), not P L / (k A)) and the
+                      indicator's sensitivity falls linearly from the pump face to the far face (flux ~ 1 - z/L).
+Their lateral-loss bias (results/cw_lateral_loss) is systematic and cancels in the comparison with the reference.
+
+Helpers: frequency_response_from_step, lockin (chopped-pump fundamental), tlm_response, lateral_admittance,
+analyze (everything on one curve set), compare / void_indicators (baseline-vs-void differences).
 """
 from __future__ import annotations
 
@@ -131,84 +138,23 @@ def parker(t, dT_far, L: float, rho_cp: Optional[float] = None) -> dict:
 
 # ----------------------------------------------------------------------------- 3. two-face temperature difference
 def two_face_resistance(t, dT_pump, dT_far, P_abs: float, L: float, A: float, t_star: Optional[float] = None,
-                        spot_radius: Optional[float] = None) -> dict:
-    """R_th(t) = (dT_pump - dT_far) / P_abs and k_eff = L / (R_th A), at t_star (default: the last time).
+                        k_ref: float = COPPER.k, spot_radius: Optional[float] = None) -> dict:
+    """Void indicator: R_th(t) = (dT_pump - dT_far) / P_abs and its value at t_star (default: the last time).
 
-    With `spot_radius` the pump-spot spreading resistance 1 / (4 k a) is subtracted self-consistently:
-    R_th = L / (k A) + 1 / (4 k a)  ->  k = (L / A + 1 / (4 a)) / R_th."""
+    Not a k_eff method.  The reference levels returned for the plot are the through-flow series resistance
+    L / (k_ref A) (heat leaving through the far face) and the adiabatic quasi-steady value L / (2 k_ref A)
+    (uniform heating rate, the floating via), plus the pump-spot spreading resistance 1 / (4 k_ref a) when the
+    spot radius is given.  A void raises R_th in proportion to the flux through its plane, which falls
+    linearly from the pump face to the far face: voids near the far face are nearly invisible here."""
     t = np.asarray(t, float)
     R = (np.asarray(dT_pump, float) - np.asarray(dT_far, float)) / P_abs
-    k_curve = L / (A * np.where(R > 0, R, np.nan))
     if t_star is None:
         t_star = float(t[-1])
     R_star = float(np.interp(t_star, t, R))
-    k_eff = L / (R_star * A) if R_star > 0 else float("nan")
-    out = dict(t_star=t_star, R_th=R_star, k_eff=float(k_eff), R_th_curve=R, k_eff_curve=k_curve)
-    if spot_radius is not None and R_star > 0:
-        k_corr = (L / A + 1.0 / (4.0 * spot_radius)) / R_star
-        out.update(k_eff_spot_corrected=float(k_corr), R_spread=spreading_resistance(k_corr, spot_radius))
+    out = dict(t_star=t_star, R_th=R_star, R_th_curve=R, R_through=L / (k_ref * A), R_quasi_steady=L / (2.0 * k_ref * A))
+    if spot_radius is not None:
+        out["R_spread"] = spreading_resistance(k_ref, spot_radius)
     return out
-
-
-# ----------------------------------------------------------------------------- 4. 1-D fin model fit
-def fin_step_response(t, k: float, rho_cp: float, L: float, A: float, P_abs: float, G_prime: float = 0.0,
-                      n_terms: int = 200) -> np.ndarray:
-    """Far-face rise of a 1-D rod (length L, section A) heated by the absorbed power P_abs at z = 0 from t = 0,
-    insulated at z = L, losing heat laterally with a uniform conductance per unit length G' [W/(m K)] to the
-    ambient (fin model):  rho c A dT/dt = k A d^2T/dz^2 - G' T.
-
-    With m = G' / (rho c A) and lambda_n = n^2 pi^2 alpha / L^2:
-        T_far = P_abs / (rho c A L) [ (1 - e^{-m t}) / m + 2 sum_n (-1)^n (1 - e^{-(lambda_n + m) t}) / (lambda_n + m) ]
-    (G' = 0 gives the Carslaw-Jaeger slab solution)."""
-    t = np.asarray(t, float)[..., None]
-    alpha = k / rho_cp
-    m = G_prime / (rho_cp * A)
-    n = np.arange(1, n_terms + 1, dtype=float)
-    lam = (n * math.pi) ** 2 * alpha / L ** 2
-    # time-independent part 2 sum (-1)^n / (lambda_n + m) in closed form (sum (-1)^n / (n^2 + c^2) =
-    # pi / (2 c sinh(pi c)) - 1 / (2 c^2); -> -pi^2 / 12 for c -> 0), so the truncation only affects t -> 0
-    c2 = m * L ** 2 / (math.pi ** 2 * alpha)
-    if c2 > 1e-6:
-        c = math.sqrt(c2)
-        const = 2.0 * L ** 2 / (math.pi ** 2 * alpha) * (math.pi / (2.0 * c * math.sinh(math.pi * c)) - 1.0 / (2.0 * c2))
-    else:
-        const = -L ** 2 / (6.0 * alpha) * (1.0 - c2 * math.pi ** 2 * 7.0 / 60.0)   # next term of the expansion
-    series = const - 2.0 * np.sum((-1.0) ** n * np.exp(-(lam + m) * t) / (lam + m), axis=-1)
-    tt = t[..., 0]
-    first = (1.0 - np.exp(-m * tt)) / m if m > 0 else tt
-    return np.where(tt > 0.0, P_abs / (rho_cp * A * L) * (first + series), 0.0)
-
-
-def fit_fin_model(t, dT_far, P_abs: float, L: float, A: float, rho_cp: float, fit_loss: bool = True,
-                  t_min: float = 0.0, k0: float = COPPER.k, n_terms: int = 100) -> dict:
-    """Least squares of `fin_step_response` to the far-face curve for k_eff (and G' when fit_loss).
-    Parameters are fitted in log space (k > 0, G' > 0).  Returns k_eff, G_prime, alpha, the fitted curve on t,
-    the RMS residual and the residual relative to the RMS of the data."""
-    t, y = np.asarray(t, float), np.asarray(dT_far, float)
-    sel = t >= t_min
-    tt, yy = t[sel], y[sel]
-    t_end = float(t[-1])
-    scale = rho_cp * A / t_end                 # G' = (m t_end) * scale: the loss is fitted as the dimensionless rate m t_end
-
-    def unpack(p):
-        k = math.exp(p[0])
-        G = math.exp(p[1]) * scale if fit_loss else 0.0
-        return k, G
-
-    def resid(p):
-        k, G = unpack(p)
-        return fin_step_response(tt, k, rho_cp, L, A, P_abs, G, n_terms) - yy
-
-    lo = [math.log(1e-2 * k0)] + ([-25.0] if fit_loss else [])
-    hi = [math.log(1e2 * k0)] + ([5.0] if fit_loss else [])
-    p0 = [math.log(k0)] + ([-3.0] if fit_loss else [])
-    res = least_squares(resid, p0, bounds=(lo, hi), method="trf", x_scale="jac")
-    k, G = unpack(res.x)
-    curve = fin_step_response(t, k, rho_cp, L, A, P_abs, G, n_terms)
-    resid = curve[sel] - yy
-    rms = float(np.sqrt(np.mean(resid ** 2)))
-    return dict(k_eff=k, G_prime=G, alpha=k / rho_cp, curve=curve, rms=rms,
-                rms_rel=rms / float(np.sqrt(np.mean(yy ** 2))), success=bool(res.success), t_min=t_min)
 
 
 # ----------------------------------------------------------------------------- 5. lock-in: frequency responses
@@ -275,71 +221,111 @@ def tlm_response(freqs, k: float, rho_cp: float, L: float, A: float, G_prime: fl
     return H_pump, H_far
 
 
+def _tlm_features(H, use: str) -> np.ndarray:
+    H = np.asarray(H, complex)
+    if use == "phase":
+        return np.unwrap(np.angle(H))
+    if use == "amplitude":
+        return np.log(np.abs(H))
+    if use == "both":
+        return np.concatenate([np.log(np.abs(H)), np.unwrap(np.angle(H))])
+    raise ValueError("use must be 'phase', 'amplitude' or 'both'")
+
+
 def invert_tlm(freqs, H_far, rho_cp: float, L: float, A: float, fit_loss: bool = False, k0: float = COPPER.k,
-               shell=None) -> dict:
-    """k_eff (and G' when fit_loss) from the far-face frequency response by least squares of log-amplitude
-    and phase of the TLM model over all frequencies.  `shell` = (R, Material): include the surrounding glass
-    through `lateral_admittance` (then G' only carries what the glass model misses)."""
+               shell=None, use: str = "phase") -> dict:
+    """k_eff (and G' when fit_loss) from the far-face frequency response by least squares of the TLM model over
+    all frequencies.  `use` = "phase" (default: independent of the absorbed power and of the thermoreflectance
+    coefficient, so of R and c_tr), "amplitude" or "both".  `shell` = (R, Material): include the surrounding
+    glass through `lateral_admittance` - the deliverable configuration (then G' only carries what the glass
+    model misses).  The input may be lock-in data or `frequency_response_from_step` of a recorded transient."""
     freqs = np.asarray(freqs, float)
     H = np.asarray(H_far, complex)
-    target = np.concatenate([np.log(np.abs(H)), np.unwrap(np.angle(H))])
+    target = _tlm_features(H, use)
 
     def resid(p):
         k = math.exp(p[0])
         G = math.exp(p[1]) if fit_loss else 0.0
         _, Hm = tlm_response(freqs, k, rho_cp, L, A, G, shell)
-        return np.concatenate([np.log(np.abs(Hm)), np.unwrap(np.angle(Hm))]) - target
+        return _tlm_features(Hm, use) - target
 
     p0 = [math.log(k0)] + ([math.log(1e-3)] if fit_loss else [])
     res = least_squares(resid, p0, method="trf")
     k = math.exp(res.x[0])
     G = math.exp(res.x[1]) if fit_loss else 0.0
-    return dict(k_eff=k, G_prime=G, alpha=k / rho_cp, rms=float(np.sqrt(np.mean(res.fun ** 2))), success=bool(res.success))
+    return dict(k_eff=k, G_prime=G, alpha=k / rho_cp, rms=float(np.sqrt(np.mean(res.fun ** 2))), success=bool(res.success),
+                use=use, n_freq=int(len(freqs)))
+
+
+def phase_noise_sensitivity(freqs, H_far, rho_cp: float, L: float, A: float, shell, sigma_deg, n_trials: int = 200,
+                            seed: int = 0, k_true: Optional[float] = None) -> dict:
+    """Monte-Carlo spread of the phase-based glass-shell inversion when every phase carries independent Gaussian
+    noise of `sigma_deg` (one value or a list).  Returns, per sigma: mean k, standard deviation, bias relative to
+    `k_true` (default: the noise-free inversion), and the 5-95 % range.  Amplitude noise does not enter."""
+    rng = np.random.default_rng(seed)
+    freqs = np.asarray(freqs, float)
+    H = np.asarray(H_far, complex)
+    k0 = invert_tlm(freqs, H, rho_cp, L, A, shell=shell)["k_eff"]
+    k_ref = k0 if k_true is None else k_true
+    rows = []
+    for sd in np.atleast_1d(np.asarray(sigma_deg, float)):
+        ks = np.empty(n_trials)
+        for i in range(n_trials):
+            Hn = H * np.exp(1j * np.radians(rng.normal(0.0, sd, size=len(freqs))))
+            ks[i] = invert_tlm(freqs, Hn, rho_cp, L, A, shell=shell, k0=k0)["k_eff"]
+        rows.append(dict(sigma_deg=float(sd), k_mean=float(ks.mean()), k_std=float(ks.std(ddof=1)),
+                         bias_rel=float(ks.mean() / k_ref - 1.0), std_rel=float(ks.std(ddof=1) / k_ref),
+                         p05=float(np.percentile(ks, 5)), p95=float(np.percentile(ks, 95))))
+    return dict(k_noise_free=k0, k_ref=k_ref, n_trials=n_trials, rows=rows)
 
 
 # ----------------------------------------------------------------------------- all methods / comparison
+DELIVERABLE = "tlm_shell"
 METHOD_LABELS = {
-    "step_intercept": "스텝 절편법 (t 절편 → α = L²/6t)",
-    "parker": "Parker 반상승 (임펄스 응답 → α = 0.1388 L²/t½)",
-    "two_face": "양면 온도차 (R_th → k_eff = L/(R_th A))",
-    "fin_fit": "곡선 피팅 (1-D 핀 모델, k_eff + G′)",
-    "fin_fit_lossless": "곡선 피팅 (1-D 단열 막대, k_eff)",
-    "tlm": "락인 TLM 역산 (단열 막대, k_eff)",
-    "tlm_loss": "락인 TLM 역산 (균일 손실 G′ 추가, k_eff + G′)",
-    "tlm_shell": "락인 TLM 역산 (유리 껍질 어드미턴스 모델, k_eff)",
+    "tlm_shell": "k_eff: 위상 기반 TLM 역산 (유리 껍질 어드미턴스 모델) — 절대값, R·c_tr 무관",
+    "step_intercept": "void 지표: 스텝 절편 t_int (측면 손실로 겉보기 α 편향, 기준 via 와 비교)",
+    "parker": "void 지표: Parker 반상승 t½ (측면 손실로 겉보기 α 편향, 기준 via 와 비교)",
+    "two_face": "void 지표: 양면 온도차 R_th(t*) (펌프면 쪽 void 에 민감, 반대면 쪽은 거의 안 보임)",
 }
+INDICATOR_KEYS = {"step_intercept": "t_int", "parker": "t_half", "two_face": "R_th", "tlm_shell": "k_eff"}
 
 
 def analyze(t, dT_pump, dT_far, P_abs: float, L: float, A: float, rho_cp: float, spot_radius: Optional[float] = None,
-            freqs=None, H_far=None, t_star: Optional[float] = None, intercept_window=None, fit_t_max: Optional[float] = None,
-            shell=None) -> dict:
-    """Every method on one curve set.  `freqs`/`H_far` (lock-in data, e.g. from the frequency-domain solve or
-    from `frequency_response_from_step`) enable the TLM inversions; `shell` = (R, Material) adds the glass-shell
-    TLM model.  `intercept_window` = (t_from, t_to) fits a line there instead of the maximum-slope tangent;
-    `fit_t_max` limits the fin-model fit to t <= fit_t_max.  Returns {method: result dict}."""
+            freqs=None, H_far=None, t_star: Optional[float] = None, intercept_window=None, shell=None,
+            k_ref: float = COPPER.k) -> dict:
+    """The deliverable and the void indicators on one curve set.  `freqs`/`H_far` (lock-in data, or
+    `frequency_response_from_step` of the transient) with `shell` = (R, Material) give the phase-based
+    glass-shell inversion `tlm_shell`.  `intercept_window` = (t_from, t_to) fits a line there instead of the
+    maximum-slope tangent.  Returns {method: result dict}."""
     t = np.asarray(t, float)
     win = dict(t_from=intercept_window[0], t_to=intercept_window[1]) if intercept_window else {}
-    sel = t <= (fit_t_max if fit_t_max is not None else t[-1])
     y_far = np.asarray(dT_far, float)
     out = dict(
         step_intercept=step_intercept(t, y_far, L, rho_cp, P_abs, A, **win),
         parker=parker(t, y_far, L, rho_cp),
-        two_face=two_face_resistance(t, dT_pump, y_far, P_abs, L, A, t_star, spot_radius),
-        fin_fit=fit_fin_model(t[sel], y_far[sel], P_abs, L, A, rho_cp, fit_loss=True),
-        fin_fit_lossless=fit_fin_model(t[sel], y_far[sel], P_abs, L, A, rho_cp, fit_loss=False),
+        two_face=two_face_resistance(t, dT_pump, y_far, P_abs, L, A, t_star, k_ref, spot_radius),
     )
-    if freqs is not None and H_far is not None and len(np.atleast_1d(freqs)) > 0:
-        out["tlm"] = invert_tlm(freqs, H_far, rho_cp, L, A, fit_loss=False)
-        if len(np.atleast_1d(freqs)) >= 2:
-            out["tlm_loss"] = invert_tlm(freqs, H_far, rho_cp, L, A, fit_loss=True)
-        if shell is not None:
-            out["tlm_shell"] = invert_tlm(freqs, H_far, rho_cp, L, A, fit_loss=False, shell=shell)
+    if freqs is not None and H_far is not None and shell is not None and len(np.atleast_1d(freqs)) > 0:
+        out["tlm_shell"] = invert_tlm(freqs, H_far, rho_cp, L, A, shell=shell, use="phase")
+    return out
+
+
+def void_indicators(base: dict, void: dict) -> dict:
+    """Relative change of each method's indicator (INDICATOR_KEYS) from the reference via to the void via:
+    {method: (base, void, delta, rel)}."""
+    out = {}
+    for m, key in INDICATOR_KEYS.items():
+        if m in base and m in void and key in base[m] and key in void[m]:
+            b, v = float(base[m][key]), float(void[m][key])
+            out[m] = (b, v, v - b, (v - b) / b if b != 0 else float("nan"))
     return out
 
 
 def k_eff_table(results: dict) -> dict:
-    """{method: k_eff} from `analyze` output (nan where a method gives no k)."""
-    return {m: float(r.get("k_eff", r.get("k_eff_spot_corrected", float("nan")))) for m, r in results.items()}
+    """{method: k or apparent k} from `analyze` output: the deliverable's k_eff, and for the transient indicators
+    the apparent alpha * rho_cp (biased by the lateral loss, only meaningful relative to a reference); nan
+    where a method gives none (two-face)."""
+    return {m: float(r.get("k_eff", float("nan"))) for m, r in results.items()}
 
 
 def compare(base: dict, void: dict) -> dict:

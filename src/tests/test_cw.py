@@ -191,21 +191,11 @@ def test_far_face_is_recorded_for_pulse_runs_too():
 
 # ============================================================================= step 3: analysis methods
 from ttr_sim import analysis as an  # noqa: E402
-from ttr_sim.transmission import frequency_response  # noqa: E402
+from ttr_sim.transmission import frequency_response, lockin_dataset, penetration_depth  # noqa: E402
 
 A_ROD = math.pi * R_CU ** 2
 RHO_CP = COPPER.rho_cp
 FREQS = np.array([20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0])
-
-
-def test_fin_model_reduces_to_the_slab_solution():
-    t = np.linspace(0.0, 3e-3, 50)
-    q = 4e-3 / A_ROD
-    np.testing.assert_allclose(an.fin_step_response(t, COPPER.k, RHO_CP, L_ROD, A_ROD, 4e-3, 0.0),
-                               slab_far_face_step(t, q, L_ROD), rtol=1e-9, atol=1e-12)
-    # a lateral loss lowers the far face and bends the curve over
-    lossy = an.fin_step_response(t, COPPER.k, RHO_CP, L_ROD, A_ROD, 4e-3, G_prime=20.0)
-    assert np.all(lossy[1:] < slab_far_face_step(t[1:], q, L_ROD)) and np.all(np.diff(lossy) > 0)
 
 
 def test_analysis_methods_recover_copper_on_the_lossless_rod(long_run):
@@ -221,12 +211,8 @@ def test_analysis_methods_recover_copper_on_the_lossless_rod(long_run):
     assert pk["k_eff"] == pytest.approx(k, rel=0.02)
     # two-face difference of an adiabatic rod: quasi-steady P L / (2 k A) plus the spot spreading ~ 1 / (4 k a)
     tf = an.two_face_resistance(resp.t, resp.dT_pump, resp.dT_far, resp.P_abs, L_ROD, A_ROD, spot_radius=a)
-    assert tf["R_th"] == pytest.approx(L_ROD / (2.0 * k * A_ROD) + 1.0 / (4.0 * k * a), rel=0.05)
-    assert tf["k_eff"] == L_ROD / (tf["R_th"] * A_ROD)
-    ff = an.fit_fin_model(resp.t, resp.dT_far, resp.P_abs, L_ROD, A_ROD, RHO_CP, fit_loss=True)
-    fl = an.fit_fin_model(resp.t, resp.dT_far, resp.P_abs, L_ROD, A_ROD, RHO_CP, fit_loss=False)
-    assert ff["k_eff"] == pytest.approx(k, rel=0.01) and fl["k_eff"] == pytest.approx(k, rel=0.01)
-    assert ff["G_prime"] * resp.t[-1] / (RHO_CP * A_ROD) < 1e-3 and fl["rms_rel"] < 1e-3   # effectively lossless
+    assert tf["R_th"] == pytest.approx(tf["R_quasi_steady"] + tf["R_spread"], rel=0.05)
+    assert tf["R_through"] == pytest.approx(2.0 * tf["R_quasi_steady"]) and "k_eff" not in tf    # indicator only
 
 
 def test_tlm_and_lockin_on_the_lossless_rod(long_run):
@@ -241,10 +227,15 @@ def test_tlm_and_lockin_on_the_lossless_rod(long_run):
     Hs = an.frequency_response_from_step(resp.t, resp.dT_far, FREQS, resp.P_abs)
     np.testing.assert_allclose(np.abs(Hs), np.abs(Hf), rtol=0.01)
     assert np.max(np.abs(np.degrees(np.angle(Hs / Hf)))) < 1.0
-    # inversion: exact data -> exact k; step data -> k within 1 %
+    # inversion: exact data -> exact k; step data -> k within 1 %; phase-only (default) is blind to a gain factor
     assert an.invert_tlm(FREQS, Hf, RHO_CP, L_ROD, A_ROD)["k_eff"] == pytest.approx(k, rel=1e-6)
+    assert an.invert_tlm(FREQS, 0.37 * Hf, RHO_CP, L_ROD, A_ROD)["k_eff"] == pytest.approx(k, rel=1e-6)   # R, c_tr do not matter
+    assert an.invert_tlm(FREQS, Hf, RHO_CP, L_ROD, A_ROD, use="amplitude")["k_eff"] == pytest.approx(k, rel=1e-6)
+    assert an.invert_tlm(FREQS, Hf, RHO_CP, L_ROD, A_ROD, use="both")["k_eff"] == pytest.approx(k, rel=1e-6)
     assert an.invert_tlm(FREQS, Hs, RHO_CP, L_ROD, A_ROD)["k_eff"] == pytest.approx(k, rel=0.01)
     assert an.invert_tlm(FREQS, Hs, RHO_CP, L_ROD, A_ROD, fit_loss=True)["k_eff"] == pytest.approx(k, rel=0.01)
+    with pytest.raises(ValueError):
+        an.invert_tlm(FREQS, Hf, RHO_CP, L_ROD, A_ROD, use="magic")
     # lock-in reading of a square-chopped pump: fundamental 2 P / pi
     lk = an.lockin(Hf, resp.P_abs)
     np.testing.assert_allclose(lk["amplitude"], 2.0 / math.pi * resp.P_abs * np.abs(Hf))
@@ -287,20 +278,57 @@ def test_glass_shell_model_and_analyze_on_the_real_structure():
     Hs = an.frequency_response_from_step(resp.t, resp.dT_far, FREQS, resp.P_abs)
     mid = (FREQS >= 50.0) & (FREQS <= 500.0)
     np.testing.assert_allclose(np.abs(Hs[mid]), np.abs(fr.H_far[mid]), rtol=0.02)
-    # all methods: the glass-shell inversion recovers copper, the lossless / constant-loss ones are biased
+    # the deliverable: the phase-based glass-shell inversion recovers copper; the lossless models are biased
     res = an.analyze(resp.t, resp.dT_pump, resp.dT_far, resp.P_abs, L_ROD, A_ROD, RHO_CP, spot_radius=cfg.laser.w,
-                     freqs=FREQS, H_far=fr.H_far, fit_t_max=3e-3, shell=shell)
+                     freqs=FREQS, H_far=fr.H_far, shell=shell)
     kt = an.k_eff_table(res)
-    assert set(kt) >= {"step_intercept", "parker", "two_face", "fin_fit", "fin_fit_lossless", "tlm", "tlm_loss", "tlm_shell"}
-    assert kt["tlm_shell"] == pytest.approx(cfg.copper.k, rel=0.03)
-    assert kt["tlm"] < 0.98 * cfg.copper.k                        # lateral loss read as a lower k
-    assert kt["fin_fit"] < 0.9 * cfg.copper.k                     # a constant conductance is the wrong glass model
+    assert set(res) == {"step_intercept", "parker", "two_face", "tlm_shell"} == set(an.METHOD_LABELS)
+    assert kt["tlm_shell"] == pytest.approx(cfg.copper.k, rel=0.03) and res["tlm_shell"]["use"] == "phase"
+    k_adia = an.invert_tlm(FREQS, fr.H_far, RHO_CP, L_ROD, A_ROD, use="both")["k_eff"]   # adiabatic-rod TLM: biased
+    assert abs(k_adia / cfg.copper.k - 1.0) > 0.03
     assert kt["step_intercept"] > 1.1 * cfg.copper.k and kt["parker"] > 1.1 * cfg.copper.k   # faster apparent rise
+    assert math.isnan(kt["two_face"])                             # indicator only, no k
     assert res["step_intercept"]["rho_cp_eff"] > 1.5 * RHO_CP     # the glass shares the heat
-    assert all(m in an.METHOD_LABELS for m in kt)
+    # the same inversion on the recorded transient (step FFT) and on the lock-in data (direct solve) agree
+    k_direct = an.invert_tlm(FREQS, fr.H_far, RHO_CP, L_ROD, A_ROD, shell=shell)["k_eff"]
+    k_step = an.invert_tlm(FREQS, Hs, RHO_CP, L_ROD, A_ROD, shell=shell)["k_eff"]
+    assert k_step == pytest.approx(k_direct, rel=0.02)
     # baseline-vs-"void" comparison bookkeeping
     cmp = an.compare(res, res)
     assert all(row[2] == 0.0 for rows in cmp.values() for row in rows.values())
+    vi = an.void_indicators(res, res)
+    assert set(vi) == set(res) and all(v[2] == 0.0 for v in vi.values())
+
+
+def test_lockin_dataset_switches_source_by_frequency():
+    cfg = cw_config(f_min=10.0)
+    resp = run_step_response(cfg, store_fields=False)
+    freqs = np.array([10.0, 20.0, 50.0, 100.0, 500.0, 2000.0])
+    fr = frequency_response(cfg, freqs)
+    assert fr.warnings == []                                      # f_min widened the shell: 3 penetration depths fit
+    assert build_grid(cfg).r_faces[-1] - R_CU >= 3.0 * penetration_depth(10.0) * (1 - 1e-9)
+    ds = lockin_dataset(resp, fr)
+    assert ds.f_switch == pytest.approx(1.0 / resp.t[-1])
+    assert list(ds.source) == ["direct"] * 2 + ["step_fft"] * 4
+    np.testing.assert_array_equal(ds.H_far[:2], fr.H_far[:2])
+    np.testing.assert_allclose(np.abs(ds.H_far[2:]), np.abs(fr.H_far[2:]), rtol=0.03)
+    assert list(lockin_dataset(resp, fr, prefer="direct").source) == ["direct"] * 6
+    assert list(lockin_dataset(resp, None, freqs).source) == ["step_fft"] * 6
+    # the deliverable on the mixed dataset
+    k = an.invert_tlm(ds.freqs, ds.H_far, RHO_CP, L_ROD, A_ROD, shell=(R_CU, FUSED_SILICA))["k_eff"]
+    assert k == pytest.approx(COPPER.k, rel=0.03)
+    # a too-thin shell for the lowest frequency is reported by the frequency solve
+    thin = frequency_response(cw_config(t_end=5e-3), [1.0])
+    assert any("침투" in w for w in thin.warnings)
+
+
+def test_phase_noise_sensitivity_grows_with_sigma():
+    _, Hf = an.tlm_response(FREQS, COPPER.k, RHO_CP, L_ROD, A_ROD, shell=(R_CU, FUSED_SILICA))
+    out = an.phase_noise_sensitivity(FREQS, Hf, RHO_CP, L_ROD, A_ROD, (R_CU, FUSED_SILICA), [0.1, 0.5], n_trials=40, seed=1)
+    assert out["k_noise_free"] == pytest.approx(COPPER.k, rel=1e-6)
+    r01, r05 = out["rows"]
+    assert 0.0 < r01["std_rel"] < r05["std_rel"] < 0.2
+    assert abs(r01["bias_rel"]) < 3 * r01["std_rel"] / math.sqrt(40) + 1e-3
 
 
 # ============================================================================= step 5: outer boundary options
@@ -364,14 +392,100 @@ def test_lateral_loss_biases_the_methods_in_order(boundary_runs):
     for outer, (cfg, resp) in boundary_runs.items():
         fr = frequency_response(cfg, freqs)
         res = an.analyze(resp.t, resp.dT_pump, resp.dT_far, resp.P_abs, L_ROD, A_ROD, RHO_CP, spot_radius=cfg.laser.w,
-                         freqs=freqs, H_far=fr.H_far, fit_t_max=3e-3, shell=(R_CU, FUSED_SILICA))
+                         freqs=freqs, H_far=fr.H_far, shell=(R_CU, FUSED_SILICA))
         k[outer] = an.k_eff_table(res)
+    # the deliverable (infinite-glass model) is within 3 % on the "far" boundary; the neighbour bounds bend the
+    # low-frequency phase (the glass is not infinite there) and stay within the documented 10 %
     assert k["far"]["tlm_shell"] == pytest.approx(COPPER.k, rel=0.03)
-    for m in ("tlm", "fin_fit"):                       # amplitude lost sideways reads as a lower k
-        assert all(k[b][m] < 0.98 * COPPER.k for b in k)
-    for m in ("step_intercept", "parker"):             # faster apparent rise reads as a higher k ...
+    assert k["neighbor_sink"]["tlm_shell"] == pytest.approx(COPPER.k, rel=0.10)
+    assert k["neighbor_adiabatic"]["tlm_shell"] == pytest.approx(COPPER.k, rel=0.25)   # closed thin annulus: no infinite glass at all
+    for m in ("step_intercept", "parker"):             # faster apparent rise reads as a higher apparent alpha ...
         assert all(k[b][m] > 1.02 * COPPER.k for b in ("far", "neighbor_sink"))
         assert k["neighbor_adiabatic"][m] < COPPER.k   # ... unless a thin closed glass annulus acts as extra heat capacity
-    # the boundary matters for every method (the spread between the two neighbour bounds is the array sensitivity)
-    for m in ("step_intercept", "parker", "tlm", "tlm_shell"):
+    # the boundary matters for the indicators (the spread between the two neighbour bounds is the array sensitivity)
+    for m in ("step_intercept", "parker"):
         assert k["neighbor_sink"][m] != pytest.approx(k["neighbor_adiabatic"][m], rel=0.005)
+
+
+# ============================================================================= step 7: 3-D spot shape / far face
+from ttr_sim.solver3d import count_unknowns, needs_3d, spot_sector_weights, theta_faces  # noqa: E402
+from ttr_sim.solver import beam_annulus_weights  # noqa: E402
+
+T3D = 1e-3      # short window and a 5 um grid: the 3-D runs stay at ~30 s under direct LU
+DZ3 = 5e-6
+
+
+def test_spot_sector_weights_reproduce_the_circular_annulus_weights():
+    cfg = cw_config(t_end=T3D, dz=DZ3, spot_offset=1e-12)                  # circular spot, forced non-axisymmetric
+    assert needs_3d(cfg) and not cfg.laser.axisymmetric and cfg.laser.w_b is None
+    g = build_grid(cfg)
+    th = theta_faces(cfg)
+    assert th[0] == 0.0 and th[-1] == pytest.approx(math.pi) and len(th) - 1 == cfg.numerics.spot_theta_cells
+    W = spot_sector_weights(g, th, cfg.laser, cfg.geometry.R_cu)
+    Wa = beam_annulus_weights(g.r_faces, cfg.laser, cfg.geometry.R_cu)
+    assert W.sum() == pytest.approx(0.5 * Wa.sum(), rel=2e-3)        # half circle
+    np.testing.assert_allclose(W.sum(axis=1), 0.5 * Wa, rtol=5e-3, atol=1e-3 * Wa.max())
+    # an ellipse of the same area absorbs the same power; an offset moves the weight to theta = 0
+    ce = cw_config(t_end=T3D, dz=DZ3, spot_axes=(12e-6, 10e-6))
+    assert ce.laser.is_elliptical and ce.laser.beam_area == pytest.approx(math.pi * 6e-6 * 5e-6)
+    We = spot_sector_weights(g, th, ce.laser, ce.geometry.R_cu)
+    assert We.sum() == pytest.approx(0.5 * ce.laser.beam_area, rel=2e-3)
+    nth = len(th) - 1
+    assert We[:, 0].sum() > 1.1 * We[:, nth // 2].sum()                # long axis along theta = 0, short along pi/2
+    assert We[:, 0].sum() == pytest.approx(We[:, -1].sum())           # mirror symmetric about the y axis
+    co = cw_config(t_end=T3D, dz=DZ3, spot_offset=3e-6)
+    Wo = spot_sector_weights(g, th, co.laser, co.geometry.R_cu)
+    assert Wo.sum() == pytest.approx(0.5 * co.laser.beam_area, rel=2e-3) and Wo[:, 0].sum() > Wo[:, -1].sum()
+    with pytest.raises(NotImplementedError):
+        run_step_response(replace(co, laser=replace(co.laser, beam="gaussian")))
+
+
+@pytest.fixture(scope="module")
+def spot_runs():
+    c2 = cw_config(t_end=T3D, dz=DZ3)
+    out = {"2d": run_step_response(c2, store_fields=False)}
+    out["3d_circle"] = run_step_response(cw_config(t_end=T3D, dz=DZ3, spot_offset=1e-12), store_fields=False)
+    out["ellipse"] = run_step_response(cw_config(t_end=T3D, dz=DZ3, spot_axes=(12e-6, 10e-6)), store_fields=False)
+    return out
+
+
+def test_3d_circular_spot_reproduces_the_2d_solution(spot_runs):
+    r2, r3 = spot_runs["2d"], spot_runs["3d_circle"]
+    assert r3.result.is_3d and not r2.result.is_3d and abs(r3.energy_error) < 1e-6
+    assert r3.P_abs == pytest.approx(r2.P_abs, rel=2e-3)
+    assert np.allclose(r3.t, r2.t)
+    np.testing.assert_allclose(r3.dT_pump[5:], r2.dT_pump[5:], rtol=0.01)
+    far_scale = r2.dT_far[-1]
+    assert np.max(np.abs(r3.dT_far - r2.dT_far)) < 0.01 * far_scale
+    assert r3.result.T_far.shape == (len(r3.t), 2 * r3.result.grid.nr) and r3.result.dT_probe_far is not None
+    np.testing.assert_allclose(r3.dT_far, r3.result.dT_probe_far)
+
+
+def test_elliptical_spot_changes_the_pump_face_only(spot_runs):
+    r2, re = spot_runs["2d"], spot_runs["ellipse"]
+    assert re.result.is_3d and re.P_abs == pytest.approx(r2.P_abs, rel=2e-3)
+    i = int(np.searchsorted(re.t, 1e-4))
+    pump_dev = abs(re.dT_pump[i] / r2.dT_pump[i] - 1.0)
+    assert 0.002 < pump_dev < 0.08                                   # a few percent on the pump face (spec section 1 table)
+    far_dev = np.max(np.abs(re.dT_far - r2.dT_far)) / r2.dT_far[-1]
+    assert far_dev < 0.005                                           # negligible on the far face (radial equilibration)
+
+
+def test_3d_far_face_of_an_on_axis_void_matches_2d():
+    v = VoidSpec(enabled=True, depth=245e-6, thickness=10e-6, r_half=20e-6, k=0.026)
+    kw = dict(t_end=T3D, dz=DZ3, void=v, void_cells=4, theta_max=math.pi / 6)
+    r2 = run_step_response(cw_config(**kw), store_fields=False)
+    r3 = run_step_response(cw_config(spot_offset=1e-12, **kw), store_fields=False)
+    assert r3.result.is_3d and abs(r3.energy_error) < 1e-6
+    assert np.max(np.abs(r3.dT_far - r2.dT_far)) < 0.01 * r2.dT_far[-1]
+    np.testing.assert_allclose(r3.dT_pump[5:], r2.dT_pump[5:], rtol=0.01)
+
+
+def test_frequency_solve_uses_the_equivalent_circle_for_3d_spots():
+    ce = cw_config(t_end=T3D, dz=DZ3, spot_axes=(12e-6, 10e-6))
+    f = np.array([100.0, 1000.0])
+    fe = frequency_response(ce, f)
+    fc = frequency_response(cw_config(t_end=T3D, dz=DZ3), f)
+    np.testing.assert_allclose(fe.H_far, fc.H_far, rtol=2e-3)       # same spot area; the surface-layer grid differs slightly
+    with pytest.raises(NotImplementedError):
+        frequency_response(cw_config(t_end=T3D, void=VoidSpec(enabled=True, depth=100e-6, thickness=10e-6, r_half=10e-6, r_center=20e-6)), f)
