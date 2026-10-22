@@ -35,6 +35,9 @@ OUTER_OPTIONS = {"far": "far — 무한 유리 (기본: 이웃 비아를 고려�
                  "neighbor_sink": "이웃 비아 = 완전 싱크 (r = pitch − R_cu 등온, 하한)",
                  "neighbor_adiabatic": "이웃 비아 대칭 셀 (r = pitch/2 단열, 상한 — 비물리적 DC)"}
 VIEWS = ["신호", "분석", "락인", "온도장", "검증"]
+# legends go below the x-axis title (a legend inside the bottom margin overlaps "t [ms]")
+LEGEND_BELOW = dict(orientation="h", yanchor="top", y=-0.28, xanchor="left", x=0.0)
+MARGIN_BELOW = dict(l=50, r=20, t=50, b=110)
 INDICATORS = ["step_intercept", "parker", "two_face"]
 IND_LABEL = {"step_intercept": "스텝 절편 t_int", "parker": "Parker 반상승 t½", "two_face": "양면 온도차 R_th(t*)"}
 # Widgets that exist only for some settings get their default as `value`, not as a session-state seed: a keyed
@@ -282,7 +285,7 @@ if view == "신호":
         f1.add_trace(go.Scatter(x=r.t * ts, y=r.dT_pump, name=f"펌프면 z=0 ({name})", line=dict(color="#d62728", dash=dash)))
         f1.add_trace(go.Scatter(x=r.t * ts, y=r.dT_far, name=f"반대면 z=L ({name})", line=dict(color="#1f77b4", dash=dash)))
     f1.add_hline(y=res["dT_max"], line=dict(color="gray", dash="dot"), annotation_text="선형 한계 ΔT_max")
-    f1.update_layout(title="스텝 응답 ΔT(t)", xaxis_title="t [ms]", yaxis_title="ΔT [K]", height=420, legend=dict(orientation="h"))
+    f1.update_layout(title="스텝 응답 ΔT(t)", xaxis_title="t [ms]", yaxis_title="ΔT [K]", height=420, legend=LEGEND_BELOW, margin=MARGIN_BELOW)
     if use_log:
         logx(f1)
     c1.plotly_chart(f1, use_container_width=True)
@@ -293,7 +296,7 @@ if view == "신호":
         f2.add_trace(go.Scatter(x=r.t * ts, y=r.dRR_pump * 1e6, name=f"펌프면 ({name})", line=dict(color="#d62728", dash=dash)))
         f2.add_trace(go.Scatter(x=r.t * ts, y=r.dRR_far * 1e6, name=f"반대면 ({name})", line=dict(color="#1f77b4", dash=dash)))
     f2.update_layout(title=f"열반사 신호 ΔR/R (c_tr = {cfg_b.laser.c_tr:.2e} /K)", xaxis_title="t [ms]", yaxis_title="ΔR/R [ppm]", height=420,
-                     legend=dict(orientation="h"))
+                     legend=LEGEND_BELOW, margin=MARGIN_BELOW)
     if use_log:
         logx(f2)
     c2.plotly_chart(f2, use_container_width=True)
@@ -304,7 +307,7 @@ if view == "신호":
             b, vv = getattr(rb, key), getattr(rv, key)
             f3.add_trace(go.Scatter(x=rb.t * ts, y=np.where(np.abs(b) > 1e-9 * np.abs(b).max(), (vv - b) / np.where(b == 0, 1, b) * 100, np.nan),
                                     name=f"{lab} 상대 변화", line=dict(color=col)))
-        f3.update_layout(title="void 신호: (void − 기준) / 기준 [%]", xaxis_title="t [ms]", yaxis_title="상대 변화 [%]", height=380, legend=dict(orientation="h"))
+        f3.update_layout(title="void 신호: (void − 기준) / 기준 [%]", xaxis_title="t [ms]", yaxis_title="상대 변화 [%]", height=380, legend=LEGEND_BELOW, margin=MARGIN_BELOW)
         if use_log:
             logx(f3)
         st.plotly_chart(f3, use_container_width=True)
@@ -371,7 +374,7 @@ elif view == "분석":
                           annotation_text="단열 준정상 P·L/(2kA) + 스프레딩 1/(4ka)")
             fig.add_vline(x=t_star * ts, line=dict(color="#2ca02c", dash="dot"), annotation_text="t*")
             fig.update_layout(xaxis_title="t [ms]", yaxis_title="R_th [K/W]", title="양면 온도차 R_th(t) = (ΔT_pump − ΔT_far)/P_abs", xaxis_type="log")
-    fig.update_layout(height=420, legend=dict(orientation="h"))
+    fig.update_layout(height=420, legend=LEGEND_BELOW, margin=MARGIN_BELOW)
     st.plotly_chart(fig, use_container_width=True)
 
 elif view == "락인":
@@ -393,8 +396,8 @@ elif view == "락인":
                                     marker=dict(color=col, symbol="x")))
     fa.add_vline(x=base["ds"].f_switch, line=dict(color="gray", dash="dot"), annotation_text="1/창: 아래는 직접 풀이 사용")
     fp.add_vline(x=base["ds"].f_switch, line=dict(color="gray", dash="dot"))
-    fa.update_layout(title="락인 진폭 (기본파)", xaxis_title="f [Hz]", yaxis_title="진폭 [mK]", xaxis_type="log", yaxis_type="log", height=440, legend=dict(orientation="h"))
-    fp.update_layout(title="락인 위상 (지연 음수, unwrap)", xaxis_title="f [Hz]", yaxis_title="위상 [°]", xaxis_type="log", height=440, legend=dict(orientation="h"))
+    fa.update_layout(title="락인 진폭 (기본파)", xaxis_title="f [Hz]", yaxis_title="진폭 [mK]", xaxis_type="log", yaxis_type="log", height=440, legend=LEGEND_BELOW, margin=MARGIN_BELOW)
+    fp.update_layout(title="락인 위상 (지연 음수, unwrap)", xaxis_title="f [Hz]", yaxis_title="위상 [°]", xaxis_type="log", height=440, legend=LEGEND_BELOW, margin=MARGIN_BELOW)
     c1.plotly_chart(fa, use_container_width=True)
     c2.plotly_chart(fp, use_container_width=True)
     tbl = []
@@ -469,7 +472,7 @@ elif view == "검증":
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=rb.t * ts, y=rb.dT_far, name="반대면 계산 (기준)", line=dict(color="#1f77b4")))
     fig.add_trace(go.Scatter(x=rb.t * ts, y=ana, name="1-D 단열 막대 해석해", line=dict(color="gray", dash="dot")))
-    fig.update_layout(xaxis_title="t [ms]", yaxis_title="ΔT [K]", height=400, xaxis_type="log", legend=dict(orientation="h"),
+    fig.update_layout(xaxis_title="t [ms]", yaxis_title="ΔT [K]", height=400, xaxis_type="log", legend=LEGEND_BELOW, margin=MARGIN_BELOW,
                       title=f"절편 L²/(6α) = {slab_intercept(res['L']) * ts:.3g} ms (Cu)")
     st.plotly_chart(fig, use_container_width=True)
     g = rb.result.grid
