@@ -489,3 +489,34 @@ def test_frequency_solve_uses_the_equivalent_circle_for_3d_spots():
     np.testing.assert_allclose(fe.H_far, fc.H_far, rtol=2e-3)       # same spot area; the surface-layer grid differs slightly
     with pytest.raises(NotImplementedError):
         frequency_response(cw_config(t_end=T3D, void=VoidSpec(enabled=True, depth=100e-6, thickness=10e-6, r_half=10e-6, r_center=20e-6)), f)
+
+
+# ============================================================================= off-axis / multiple voids in CW mode
+def test_off_axis_void_runs_in_3d_and_inverts_from_the_step_fft():
+    v = VoidSpec(enabled=True, depth=245e-6, thickness=10e-6, r_half=10e-6, r_center=20e-6, k=0.026)
+    kw = dict(t_end=T3D, dz=DZ3, void_cells=3, theta_max=math.pi / 6)
+    cfg = cw_config(void=v, **kw)
+    assert needs_3d(cfg)
+    resp = run_step_response(cfg, store_fields=False)
+    assert resp.result.is_3d and abs(resp.energy_error) < 1e-6
+    assert np.all(np.isfinite(resp.dT_far)) and resp.dT_far[-1] > 0 and resp.dT_pump[-1] > resp.dT_far[-1]
+    # the frequency solve is axisymmetric only: the lock-in data come from the step FFT
+    freqs = np.array([2000.0, 5000.0])                   # >= 1 / window of this short run
+    with pytest.raises(NotImplementedError):
+        frequency_response(cfg, freqs)
+    ds = lockin_dataset(resp, None, freqs)
+    assert list(ds.source) == ["step_fft", "step_fft"]
+    base = run_step_response(cw_config(**kw), store_fields=False)
+    db = lockin_dataset(base, None, freqs)
+    shell = (R_CU, FUSED_SILICA)
+    k_v = an.invert_tlm(ds.freqs, ds.H_far, RHO_CP, L_ROD, A_ROD, shell=shell)["k_eff"]
+    k_b = an.invert_tlm(db.freqs, db.H_far, RHO_CP, L_ROD, A_ROD, shell=shell)["k_eff"]
+    assert k_b == pytest.approx(COPPER.k, rel=0.10)                 # short window, two high frequencies: coarse but sane
+    assert 0.90 < k_v / k_b < 1.0                                   # the void lowers the apparent k by a few percent
+    # two voids: one on the axis and one off it -> full circle 3-D; both faces still finite and consistent
+    v2 = VoidSpec(enabled=True, depth=100e-6, thickness=10e-6, r_half=10e-6, r_center=0.0, k=0.026)
+    cfg2 = cw_config(void=v2, extra_voids=(v,), **kw)
+    assert needs_3d(cfg2) and len(cfg2.voids) == 2
+    r2 = run_step_response(cfg2, store_fields=False)
+    assert r2.result.is_3d and r2.result.diagnostics["full_circle"] and abs(r2.energy_error) < 1e-6
+    assert r2.dT_far[-1] < resp.dT_far[-1] * 1.001 and r2.dT_pump[-1] > resp.dT_pump[-1] * 0.999
