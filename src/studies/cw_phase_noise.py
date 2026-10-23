@@ -34,7 +34,9 @@ A = math.pi * R_CU ** 2
 SHELL = (R_CU, FUSED_SILICA)
 SIGMAS = [0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
 FREQ_SETS = {
-    "9점 10 Hz–5 kHz (기본)": np.array([10, 20, 50, 100, 200, 500, 1000, 2000, 5000.0]),
+    "9점 50 Hz–2 kHz (GUI 기본)": np.logspace(math.log10(50), math.log10(2000), 9),
+    "21점 50 Hz–2 kHz": np.logspace(math.log10(50), math.log10(2000), 21),
+    "9점 10 Hz–5 kHz": np.array([10, 20, 50, 100, 200, 500, 1000, 2000, 5000.0]),
     "5점 50 Hz–2 kHz": np.array([50, 100, 200, 500, 2000.0]),
     "3점 100 Hz–1 kHz": np.array([100, 300, 1000.0]),
     "1점 500 Hz": np.array([500.0]),
@@ -61,7 +63,7 @@ def main():
                              p05=r["p05"], p95=r["p95"]))
         print(f"{name:24s} k0={mc['k_noise_free']:.1f}  " + "  ".join(f"σ={r['sigma_deg']:g}°: ±{r['std_rel'] * 100:.2f}%" for r in mc["rows"]), flush=True)
     # the transient route: same inversion on the step FFT (no added noise) and on the mixed dataset
-    freqs = FREQ_SETS["9점 10 Hz–5 kHz (기본)"]
+    freqs = FREQ_SETS["9점 50 Hz–2 kHz (GUI 기본)"]
     fr = frequency_response(cfg, freqs)
     ds = lockin_dataset(resp, fr)
     k_direct = an.invert_tlm(freqs, fr.H_far, COPPER.rho_cp, L, A, shell=SHELL)["k_eff"]
