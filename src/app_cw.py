@@ -259,12 +259,12 @@ with st.sidebar:
             st.session_state.voids_df, num_rows="dynamic", use_container_width=True, hide_index=True, key="void_table",
             disabled=not st.session_state.void_on,
             column_config={
-                VOID_COLUMNS[0]: st.column_config.NumberColumn(min_value=0.0, max_value=2000.0, step=1.0, format="%.4g", help="void 윗면의 깊이 (펌프면 z = 0 기준)"),
-                VOID_COLUMNS[1]: st.column_config.NumberColumn(min_value=0.1, max_value=500.0, step=1.0, format="%.4g", help="축방향 두께"),
-                VOID_COLUMNS[2]: st.column_config.NumberColumn(min_value=0.5, max_value=200.0, step=1.0, format="%.4g", help="반경 방향 반폭 (타원 단면의 반축)"),
-                VOID_COLUMNS[3]: st.column_config.NumberColumn(min_value=0.0, max_value=200.0, step=1.0, format="%.4g",
+                VOID_COLUMNS[0]: st.column_config.NumberColumn(width="small", min_value=0.0, max_value=2000.0, step=1.0, format="%.4g", help="void 윗면의 깊이 (펌프면 z = 0 기준)"),
+                VOID_COLUMNS[1]: st.column_config.NumberColumn(width="small", min_value=0.1, max_value=500.0, step=1.0, format="%.4g", help="축방향 두께"),
+                VOID_COLUMNS[2]: st.column_config.NumberColumn(width="small", min_value=0.5, max_value=200.0, step=1.0, format="%.4g", help="반경 방향 반폭 (타원 단면의 반축)"),
+                VOID_COLUMNS[3]: st.column_config.NumberColumn(width="small", min_value=0.0, max_value=200.0, step=1.0, format="%.4g",
                                                                 help="void 중심이 비아 축에서 벗어난 거리. 0 = 축 위 원판 (2-D). > 0 이면 축 밖 void → 3-D 계산. 이탈 거리 + 반폭 ≤ 비아 반경"),
-                VOID_COLUMNS[4]: st.column_config.NumberColumn(min_value=0.0, max_value=360.0, step=15.0, format="%.4g",
+                VOID_COLUMNS[4]: st.column_config.NumberColumn(width="small", min_value=0.0, max_value=360.0, step=15.0, format="%.4g",
                                                                 help="축에서 벗어난 방향 (3-D). void 가 하나면 결과에 영향이 없으니 0° 로 두세요 (반원 대칭 격자로 2배 빠름). 여러 void 의 상대 배치에만 의미가 있습니다"),
             },
         )
