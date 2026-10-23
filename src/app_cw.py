@@ -345,33 +345,42 @@ base = runs["baseline"]
 rb, cfg_b = base["resp"], base["cfg"]
 ts = 1e3  # ms
 P_max = rb.P_in * res["dT_max"] / rb.dT_pump[-1]
-# ---- header metrics
-c = st.columns(6)
-c[2].metric("흡수 출력", f"{rb.P_abs * 1e3:.3g} mW", f"입사 {rb.P_in * 1e3:.3g} mW")
-c[3].metric(f"펌프면 ΔT (관측창의 끝, {rb.t[-1] * ts:.3g} ms)", f"{rb.dT_pump[-1]:.4g} K", f"한계 {res['dT_max']:.3g} K", delta_color="off",
-            help="펌프 스팟 아래 펌프면 프로브의 온도 상승, 관측창의 끝 값 (가장 뜨거운 곳). 선형 한계 ΔT_max 와 비교합니다. " + LINEAR_LIMIT_HELP)
-c[4].metric("선형 한계 최대 출력", f"{P_max * 1e3:.3g} mW", f"{'초과' if rb.P_in > P_max else '여유'} ×{P_max / rb.P_in:.2f}",
-            delta_color="inverse" if rb.P_in > P_max else "normal",
-            help=f"P_max = P × ΔT_max / ΔT_pump(관측창의 끝) = {rb.P_in * 1e3:.3g} mW × {res['dT_max']:.3g} K / {rb.dT_pump[-1]:.3g} K. "
-                 f"'여유 ×n' 은 설정 출력을 n 배까지 올릴 수 있다는 뜻, '초과' 는 이미 한계 밖이라는 뜻입니다. " + LINEAR_LIMIT_HELP)
-c[5].metric(f"반대면 ΔT (관측창의 끝, {rb.t[-1] * ts:.3g} ms)", f"{rb.dT_far[-1]:.4g} K", f"양면 차 {rb.dT_diff[-1]:.4g} K", delta_color="off")
-# the headline result: the deliverable on the baseline via; with a void, what the void does to it
+# ---- headline: the void change (what the user came for); everything else folds away below it
+rv = runs["void"]["resp"] if has_void else None
 shell_b = (cfg_b.geometry.R_cu, FUSED_SILICA)
 k_head = an.invert_tlm(base["ds"].freqs, base["ds"].H_far, COPPER.rho_cp, res["L"], res["A"], shell=shell_b)["k_eff"]
-c[1].metric("k_eff (기준 via)", f"{k_head:.0f} W/mK", f"참값 398 대비 {(k_head / COPPER.k - 1) * 100:+.1f} % (모델 오차)", delta_color="off",
-            help="반대면 Lock-in 위상의 유리 껍질 TLM 역산 (분석 탭). 반사율·c_tr 무관. 참값과의 차이는 모델 오차입니다.")
+top = st.columns([1, 1, 1])
 if has_void:
     dsv = runs["void"]["ds"]
     k_void = an.invert_tlm(dsv.freqs, dsv.H_far, COPPER.rho_cp, res["L"], res["A"], shell=shell_b)["k_eff"]
     dph = np.degrees(np.angle(dsv.H_far / base["ds"].H_far))
     i_ph = int(np.argmax(np.abs(dph)))
-    c[0].metric("void 변화", f"Δk/k {(k_void / k_head - 1) * 100:+.2f} %", f"위상 최대 {dph[i_ph]:+.2f}° @ {base['ds'].freqs[i_ph]:g} Hz", delta_color="off",
-                help="void via 와 기준 via 의 k_eff 차이, 그리고 반대면 Lock-in 위상 변화의 최대값. 검출 조건: 위상 변화가 Lock-in 위상 잡음의 ~3배 이상 "
-                     "(기본 9점·0.5° 잡음에서 Δk/k 의 분산은 ±0.3 %).")
+    top[0].metric("void 변화: Δk/k", f"{(k_void / k_head - 1) * 100:+.2f} %", f"k_eff {k_head:.0f} → {k_void:.0f} W/mK", delta_color="off",
+                  help="void via 와 void 없는 via 의 k_eff 차이 (반대면 Lock-in 위상 역산). 기본 9점·0.5° 위상 잡음에서 Δk/k 의 분산은 ±0.3 % 이므로 "
+                       "그 ~3배를 넘으면 검출 가능합니다.")
+    top[1].metric("void 변화: Lock-in 위상", f"{dph[i_ph]:+.2f}°", f"최대, @ {base['ds'].freqs[i_ph]:g} Hz", delta_color="off",
+                  help="반대면 Lock-in 위상 변화의 최대값과 그 주파수. 검출 조건: 그 주파수·진폭에서의 Lock-in 위상 잡음의 ~3배 이상 (Lock-in 탭에 주파수별 값).")
+    i_far = int(np.argmax(np.abs(rv.dT_far - rb.dT_far) / np.maximum(rb.dT_far, 1e-12) * (rb.dT_far > 1e-3 * rb.dT_far.max())))
+    top[2].metric("void 변화: 반대면 ΔT", f"{(rv.dT_far[i_far] / rb.dT_far[i_far] - 1) * 100:+.2f} %", f"최대, @ {rb.t[i_far] * ts:.3g} ms", delta_color="off",
+                  help="시간 영역 반대면 신호의 최대 상대 변화 (열 도달 부근). 절대값은 신호 탭의 mK 표시로 확인하세요.")
 else:
     amp = 2.0 / math.pi * base["ds"].P_abs * np.abs(base["ds"].H_far) * 1e3
-    c[0].metric("반대면 Lock-in 진폭", f"{amp[0]:.3g} mK @ {base['ds'].freqs[0]:g} Hz", f"{amp[-1]:.3g} mK @ {base['ds'].freqs[-1]:g} Hz", delta_color="off",
-                help="사각 chopping 기본파 진폭 (최저·최고 주파수). Lock-in 잡음 바닥과 비교해 측정 가능한 주파수 범위를 판단합니다.")
+    top[0].metric("k_eff (void 없는 via)", f"{k_head:.0f} W/mK", f"참값 398 대비 {(k_head / COPPER.k - 1) * 100:+.1f} % (모델 오차)", delta_color="off",
+                  help="반대면 Lock-in 위상의 유리 껍질 TLM 역산 (분석 탭). 반사율·c_tr 무관. void 를 넣으면 여기에 void 변화가 표시됩니다.")
+    top[1].metric("반대면 Lock-in 진폭", f"{amp[0]:.3g} mK @ {base['ds'].freqs[0]:g} Hz", f"{amp[-1]:.3g} mK @ {base['ds'].freqs[-1]:g} Hz", delta_color="off",
+                  help="사각 chopping 기본파 진폭 (최저·최고 주파수). Lock-in 잡음 바닥과 비교해 측정 가능한 주파수 범위를 판단합니다.")
+with st.expander("세부 결과: k_eff · 출력 · 온도 상승 · 선형 한계", expanded=False):
+    c = st.columns(5)
+    c[0].metric("k_eff (void 없는 via)", f"{k_head:.0f} W/mK", f"참값 398 대비 {(k_head / COPPER.k - 1) * 100:+.1f} % (모델 오차)", delta_color="off",
+                help="반대면 Lock-in 위상의 유리 껍질 TLM 역산 (분석 탭). 반사율·c_tr 무관. 참값과의 차이는 모델 오차입니다.")
+    c[1].metric("흡수 출력", f"{rb.P_abs * 1e3:.3g} mW", f"입사 {rb.P_in * 1e3:.3g} mW")
+    c[2].metric(f"펌프면 ΔT (관측창의 끝, {rb.t[-1] * ts:.3g} ms)", f"{rb.dT_pump[-1]:.4g} K", f"한계 {res['dT_max']:.3g} K", delta_color="off",
+                help="펌프 스팟 아래 펌프면 프로브의 온도 상승, 관측창의 끝 값 (가장 뜨거운 곳). 선형 한계 ΔT_max 와 비교합니다. " + LINEAR_LIMIT_HELP)
+    c[3].metric("선형 한계 최대 출력", f"{P_max * 1e3:.3g} mW", f"{'초과' if rb.P_in > P_max else '여유'} ×{P_max / rb.P_in:.2f}",
+                delta_color="inverse" if rb.P_in > P_max else "normal",
+                help=f"P_max = P × ΔT_max / ΔT_pump(관측창의 끝) = {rb.P_in * 1e3:.3g} mW × {res['dT_max']:.3g} K / {rb.dT_pump[-1]:.3g} K. "
+                     f"'여유 ×n' 은 설정 출력을 n 배까지 올릴 수 있다는 뜻, '초과' 는 이미 한계 밖이라는 뜻입니다. " + LINEAR_LIMIT_HELP)
+    c[4].metric(f"반대면 ΔT (관측창의 끝, {rb.t[-1] * ts:.3g} ms)", f"{rb.dT_far[-1]:.4g} K", f"양면 차 {rb.dT_diff[-1]:.4g} K", delta_color="off")
 if abs(rb.energy_error) > 1e-6 or (has_void and abs(runs["void"]["resp"].energy_error) > 1e-6):
     st.error(f"에너지 보존 오차가 비정상적으로 큽니다 ({rb.energy_error:.1e}): 결과를 믿지 마세요 (검증 탭).")
 if rb.P_in > P_max:
