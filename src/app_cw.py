@@ -64,7 +64,7 @@ IND_FACES = {"step_intercept": {"far"}, "parker": {"far"}, "two_face": {"pump", 
 # Widgets that exist only for some settings get their default as `value`, not as a session-state seed: a keyed
 # number_input created later than its seed shows its minimum instead of the seed (Streamlit 1.50).
 PITCH_DEFAULT_UM = 130.0
-VOID_COLUMNS = ["깊이 [μm]", "두께 [μm]", "반경 반폭 [μm]", "중심 반경 r_c [μm]", "방위각 θ [°]"]
+VOID_COLUMNS = ["깊이 [μm]", "두께 [μm]", "반경 반폭 [μm]", "축 이탈 거리 [μm]", "이탈 방위각 [°]"]
 DEFAULT_VOIDS = pd.DataFrame([[245.0, 10.0, 20.0, 0.0, 0.0]], columns=VOID_COLUMNS)
 
 
@@ -116,7 +116,7 @@ def void_warnings(voids: list) -> list:
     w = []
     for i, v in enumerate(voids, 1):
         if v.r_outer > s.R_cu_um * UM * (1 + 1e-9):
-            w.append(f"void {i}: 중심 반경 + 반폭 = {v.r_outer / UM:.3g} μm 가 비아 반경 {s.R_cu_um:g} μm 를 넘습니다 (구리 밖은 잘립니다).")
+            w.append(f"void {i}: 축 이탈 거리 + 반폭 = {v.r_outer / UM:.3g} μm 가 비아 반경 {s.R_cu_um:g} μm 를 넘습니다 (구리 밖은 잘립니다).")
         if v.z_bottom > s.L_um * UM * (1 + 1e-9):
             w.append(f"void {i}: 깊이 + 두께 = {v.z_bottom / UM:.3g} μm 가 비아 길이 {s.L_um:g} μm 를 넘습니다 (잘립니다).")
     return w
@@ -196,6 +196,16 @@ def deliverable_table(run: dict, L: float, A: float) -> dict:
 
 # ----------------------------------------------------------------------------- sidebar
 init_state()
+# wider sidebar so the five-column void table and the three-column number rows fit (same width as app.py)
+st.markdown(
+    """
+    <style>
+      section[data-testid="stSidebar"] { width: 30rem !important; min-width: 30rem !important; }
+      section[data-testid="stSidebar"] > div { width: 30rem !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 with st.sidebar:
     st.title("CW 투과 열전도도 시뮬레이터")
     st.caption("바닥면 CW 펌프 → 윗면/바닥면 프로브. 납품값: 위상 기반 유리 껍질 TLM 역산의 k_eff. 반사형(ns 펄스) 모드는 app.py 에 그대로 있습니다.")
@@ -253,15 +263,15 @@ with st.sidebar:
                 VOID_COLUMNS[1]: st.column_config.NumberColumn(min_value=0.1, max_value=500.0, step=1.0, format="%.4g", help="축방향 두께"),
                 VOID_COLUMNS[2]: st.column_config.NumberColumn(min_value=0.5, max_value=200.0, step=1.0, format="%.4g", help="반경 방향 반폭 (타원 단면의 반축)"),
                 VOID_COLUMNS[3]: st.column_config.NumberColumn(min_value=0.0, max_value=200.0, step=1.0, format="%.4g",
-                                                                help="void 중심의 축으로부터 거리. 0 = 축 위 원판 (2-D). > 0 이면 축 밖 void → 3-D 계산"),
+                                                                help="void 중심이 비아 축에서 벗어난 거리. 0 = 축 위 원판 (2-D). > 0 이면 축 밖 void → 3-D 계산. 이탈 거리 + 반폭 ≤ 비아 반경"),
                 VOID_COLUMNS[4]: st.column_config.NumberColumn(min_value=0.0, max_value=360.0, step=15.0, format="%.4g",
-                                                                help="void 중심의 방위각 (3-D). 한 개 void 는 0° 로 두면 반원 대칭 격자로 빨라집니다"),
+                                                                help="축에서 벗어난 방향 (3-D). void 가 하나면 결과에 영향이 없으니 0° 로 두세요 (반원 대칭 격자로 2배 빠름). 여러 void 의 상대 배치에만 의미가 있습니다"),
             },
         )
         st.session_state.voids_df = edited
         st.selectbox("void 충전 k (모든 void 공통)", list(range(len(KVOID_PRESETS))), format_func=lambda i: KVOID_PRESETS[i].label, key="kvoid_idx",
                      disabled=not st.session_state.void_on)
-        st.caption("행을 추가하면 여러 void 를 함께 넣습니다 (겹치면 합쳐짐). 모든 void 가 축 위(r_c = 0)이면 2-D 축대칭, 하나라도 축 밖이면 3-D 로 풉니다: "
+        st.caption("행을 추가하면 여러 void 를 함께 넣습니다 (겹치면 합쳐짐). 모든 void 가 축 위(이탈 거리 0)이면 2-D 축대칭, 하나라도 축 밖이면 3-D 로 풉니다: "
                    "느리고(수 분~수십 분) 락인 값은 스텝 응답의 FFT 로만 얻습니다 (1/관측창 미만 주파수는 없음).")
         if st.session_state.void_on:
             for w in void_warnings(build_voids()):
@@ -345,7 +355,7 @@ if has_void:
     rv = runs["void"]["resp"]
     vlist = runs["void"]["cfg"].voids
     desc = "; ".join(f"#{i}: 깊이 {v.depth / UM:.4g}–{v.z_bottom / UM:.4g} μm, 반폭 {v.r_half / UM:.3g} μm"
-                     + (f", r_c {v.r_center / UM:.3g} μm, θ {math.degrees(v.theta):.0f}°" if v.r_center > 0 else ", 축 위") for i, v in enumerate(vlist, 1))
+                     + (f", 축 이탈 {v.r_center / UM:.3g} μm @ {math.degrees(v.theta):.0f}°" if v.r_center > 0 else ", 축 위") for i, v in enumerate(vlist, 1))
     st.caption(f"void ({len(vlist)}개, k = {vlist[0].k} W/mK): {desc} · void via: 펌프면 {rv.dT_pump[-1]:.4g} K, 반대면 {rv.dT_far[-1]:.4g} K, "
                f"에너지 오차 {rv.energy_error:.1e}, {rv.result.wall_time:.0f} s" + (" (3-D)" if rv.result.is_3d else ""))
     if runs["void"]["fr"] is None:
