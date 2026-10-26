@@ -39,7 +39,7 @@ TEMP_COLORSCALE = [
 OUTER_OPTIONS = {"far": "far — 무한 유리 (기본: 이웃 비아를 고려하지 않음)",
                  "neighbor_sink": "이웃 비아 = 완전 싱크 (r = pitch − R_cu 등온, 하한)",
                  "neighbor_adiabatic": "이웃 비아 대칭 셀 (r = pitch/2 단열, 상한 — 비물리적 DC)"}
-VIEWS = ["신호", "Lock-in", "분석", "Temperature map", "검증"]
+VIEWS = ["열전도도·void 분석", "신호", "Lock-in", "Temperature map", "검증"]
 # probe configurations: one run always holds both faces, the choice only filters what is shown and analysed
 PROBE_CONFIGS = {"both": "양면 (펌프면 + 반대면)", "far": "반대면만 (투과)", "pump": "펌프면만 (반사)"}
 FACES = {"both": ("pump", "far"), "far": ("far",), "pump": ("pump",)}
@@ -84,7 +84,7 @@ def init_state():
              dT_max=5.0, probe_d_um=2 * PROBE_RADIUS / UM, c_tr=COPPER_C_TR_PROBE, probe_cfg="both",
              L_um=500.0, R_cu_um=40.0, outer="far", kvoid_idx=0,
              t_end_ms=DEFAULT_WINDOW * 1e3, dz_um=2.5, dt_growth=1.05, f_min=DEFAULT_F_MIN, f_max=DEFAULT_F_MAX, n_f=DEFAULT_N_F,
-             result=None, view="신호", voids_df=DEFAULT_VOIDS.copy(), void_table_rev=0)
+             result=None, voids_df=DEFAULT_VOIDS.copy(), void_table_rev=0)
     for k, v in d.items():
         st.session_state.setdefault(k, v)
 
@@ -337,7 +337,7 @@ if res is None:
 
 **k_eff** — 반대면 Lock-in **위상**만으로 유리 껍질 어드미턴스 TLM 을 역산한 절대 k_eff (반사율·c_tr 무관). Lock-in 데이터든 기록한 스텝 과도응답의 FFT 든 같은 역산에 넣습니다.
 
-**void 지표** — 스텝 절편 t_int, Parker t½, 양면 온도차 R_th(t*): 같은 이웃의 기준 via 와의 차이만 씁니다. 절대값은 유리로 새는 열 때문에 편향됩니다(분석 탭에 표시).
+**void 지표** — 스텝 절편 t_int, Parker t½, 양면 온도차 R_th(t*): 같은 이웃의 기준 via 와의 차이만 씁니다. 절대값은 유리로 새는 열 때문에 편향됩니다(열전도도·void 분석 탭에 표시).
 """)
     st.stop()
 
@@ -368,13 +368,13 @@ if has_void:
 else:
     amp = 2.0 / math.pi * base["ds"].P_abs * np.abs(base["ds"].H_far) * 1e3
     top[0].metric("k_eff (void 없는 via)", f"{k_head:.0f} W/mK", f"참값 398 대비 {(k_head / COPPER.k - 1) * 100:+.1f} % (모델 오차)", delta_color="off",
-                  help="반대면 Lock-in 위상의 유리 껍질 TLM 역산 (분석 탭). 반사율·c_tr 무관. void 를 넣으면 여기에 void 변화가 표시됩니다.")
+                  help="반대면 Lock-in 위상의 유리 껍질 TLM 역산 (열전도도·void 분석 탭). 반사율·c_tr 무관. void 를 넣으면 여기에 void 변화가 표시됩니다.")
     top[1].metric("반대면 Lock-in 진폭", f"{amp[0]:.3g} mK @ {base['ds'].freqs[0]:g} Hz", f"{amp[-1]:.3g} mK @ {base['ds'].freqs[-1]:g} Hz", delta_color="off",
                   help="사각 chopping 기본파 진폭 (최저·최고 주파수). Lock-in 잡음 바닥과 비교해 측정 가능한 주파수 범위를 판단합니다.")
 with st.expander("세부 결과: k_eff · 출력 · 온도 상승 · 선형 한계", expanded=False):
     c = st.columns(5)
     c[0].metric("k_eff (void 없는 via)", f"{k_head:.0f} W/mK", f"참값 398 대비 {(k_head / COPPER.k - 1) * 100:+.1f} % (모델 오차)", delta_color="off",
-                help="반대면 Lock-in 위상의 유리 껍질 TLM 역산 (분석 탭). 반사율·c_tr 무관. 참값과의 차이는 모델 오차입니다.")
+                help="반대면 Lock-in 위상의 유리 껍질 TLM 역산 (열전도도·void 분석 탭). 반사율·c_tr 무관. 참값과의 차이는 모델 오차입니다.")
     c[1].metric("흡수 출력", f"{rb.P_abs * 1e3:.3g} mW", f"입사 {rb.P_in * 1e3:.3g} mW")
     c[2].metric(f"펌프면 ΔT (관측창의 끝, {rb.t[-1] * ts:.3g} ms)", f"{rb.dT_pump[-1]:.4g} K", f"한계 {res['dT_max']:.3g} K", delta_color="off",
                 help="펌프 스팟 아래 펌프면 프로브의 온도 상승, 관측창의 끝 값 (가장 뜨거운 곳). 선형 한계 ΔT_max 와 비교합니다. " + LINEAR_LIMIT_HELP)
@@ -401,7 +401,9 @@ if has_void:
         st.info("축 밖 void: void via 의 Lock-in 값은 스텝 응답의 FFT 로만 구했습니다 (주파수 영역 직접 풀이는 축대칭 전용). 1/관측창 미만 주파수는 없습니다.")
 st.caption(f"프로브 구성: **{PROBE_CONFIGS[st.session_state.probe_cfg]}** — 계산은 양면을 모두 담고 있으며 표시와 분석만 걸러집니다.")
 
-st.radio("보기", VIEWS, horizontal=True, key="view", label_visibility="collapsed")
+# default view given as the widget index, not as a session-state seed (a keyed radio created after its seed shows
+# the first option while the state keeps the seed, Streamlit 1.50)
+st.radio("보기", VIEWS, index=VIEWS.index("열전도도·void 분석"), horizontal=True, key="view", label_visibility="collapsed")
 view = st.session_state.view
 
 
@@ -552,7 +554,7 @@ elif view == "Lock-in":
         st.caption(f"'사용 경로': 관측창 {rb.t[-1] * ts:.3g} ms 가 분해하지 못하는 f < {base['ds'].f_switch:.3g} Hz 는 주파수 영역 직접 풀이, 그 위는 스텝 과도응답의 FFT. "
                    "두 경로의 차이가 시간 적분기의 검증 항목입니다 (검증 탭). 축 밖 void 의 void via 는 스텝 FFT 만 있으므로 1/창 미만 값은 신뢰하지 마세요.")
 
-elif view == "분석":
+elif view == "열전도도·void 분석":
     if "far" in faces:
         st.subheader("k_eff (위상 기반 유리 껍질 TLM 역산, 반대면)")
         tables = {name: deliverable_table(run, res["L"], res["A"]) for name, run in runs.items()}
