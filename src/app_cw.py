@@ -75,7 +75,7 @@ IND_FACES = {"step_intercept": {"far"}, "parker": {"far"}, "two_face": {"pump", 
 PITCH_DEFAULT_UM = 130.0
 # the table header cannot wrap: column widths below are sized to these titles (plus the type icon Streamlit draws)
 VOID_COLUMNS = ["깊이 [μm]", "두께 [μm]", "반폭 [μm]", "축 이탈 거리 [μm]", "이탈 방위각 [°]"]
-DEFAULT_VOIDS = pd.DataFrame([[245.0, 10.0, 20.0, 0.0, 0.0]], columns=VOID_COLUMNS)
+DEFAULT_VOIDS = pd.DataFrame([[245.0, 10.0, 20.0, 0.0, 0.0]], columns=VOID_COLUMNS)   # also the values a new row starts with
 
 
 # ----------------------------------------------------------------------------- state / config
@@ -133,9 +133,7 @@ def void_warnings(voids: list) -> list:
 def build_config():
     s = st.session_state
     spot3d = s.spot_3d and (abs(s.spot_a_um - s.spot_b_um) > 1e-9 or spot_offset_um() != 0.0)
-    voids = build_voids()
-    if not voids:
-        raise ValueError("void 를 하나 이상 입력하세요: 표에 모든 칸을 채운 행이 있어야 합니다.")
+    voids = build_voids()                           # empty: the void-free via alone
     cfg = cw_config(power=s.power_mW * 1e-3, reflectivity=s.refl, L=s.L_um * UM, R_cu=s.R_cu_um * UM, pump_radius=spot_radius(),
                     spot_axes=((s.spot_a_um * UM, s.spot_b_um * UM) if spot3d else None),
                     spot_offset=(spot_offset_um() * UM if spot3d else 0.0),
@@ -263,37 +261,26 @@ with st.sidebar:
             elif st.session_state.outer == "neighbor_sink":
                 st.warning("하한 참고용: 이웃 비아를 완전 싱크로 봅니다. 저주파(≲ 200 Hz) 위상이 무한 유리 모델에서 벗어나 k_eff 가 수 % 치우칩니다.")
     with st.container(border=True):
-        st.markdown("**4. void (하나 이상; 깊이는 펌프면 z = 0 기준, 위치는 비아 축 기준)**")
+        st.markdown("**4. void (깊이는 펌프면 z = 0 기준, 위치는 비아 축 기준)**")
         edited = st.data_editor(
             st.session_state.voids_df, num_rows="dynamic", use_container_width=True, hide_index=True,
             key=f"void_table_{st.session_state.void_table_rev}",       # the key changes when the table is restored (see below)
             column_config={
-                VOID_COLUMNS[0]: st.column_config.NumberColumn(width=76, min_value=0.0, max_value=2000.0, step=1.0, format="%.4g", help="void 윗면의 깊이 [μm] (펌프면 z = 0 기준)"),
-                VOID_COLUMNS[1]: st.column_config.NumberColumn(width=76, min_value=0.1, max_value=500.0, step=1.0, format="%.4g", help="축방향 두께 [μm]"),
-                VOID_COLUMNS[2]: st.column_config.NumberColumn(width=76, min_value=0.5, max_value=200.0, step=1.0, format="%.4g", help="반경 방향 반폭 [μm] (타원 단면의 반축)"),
-                VOID_COLUMNS[3]: st.column_config.NumberColumn(width=116, min_value=0.0, max_value=200.0, step=1.0, format="%.4g",
+                VOID_COLUMNS[0]: st.column_config.NumberColumn(width=76, min_value=0.0, max_value=2000.0, step=1.0, format="%.4g", default=245.0, help="void 윗면의 깊이 [μm] (펌프면 z = 0 기준)"),
+                VOID_COLUMNS[1]: st.column_config.NumberColumn(width=76, min_value=0.1, max_value=500.0, step=1.0, format="%.4g", default=10.0, help="축방향 두께 [μm]"),
+                VOID_COLUMNS[2]: st.column_config.NumberColumn(width=76, min_value=0.5, max_value=200.0, step=1.0, format="%.4g", default=20.0, help="반경 방향 반폭 [μm] (타원 단면의 반축)"),
+                VOID_COLUMNS[3]: st.column_config.NumberColumn(width=116, min_value=0.0, max_value=200.0, step=1.0, format="%.4g", default=0.0,
                                                                 help="void 중심이 비아 축에서 벗어난 거리 [μm]. 0 = 축 위 원판 (2-D). > 0 이면 축 밖 void → 3-D 계산. 이탈 거리 + 반폭 ≤ 비아 반경"),
-                VOID_COLUMNS[4]: st.column_config.NumberColumn(width=100, min_value=0.0, max_value=360.0, step=15.0, format="%.4g",
+                VOID_COLUMNS[4]: st.column_config.NumberColumn(width=100, min_value=0.0, max_value=360.0, step=15.0, format="%.4g", default=0.0,
                                                                 help="축에서 벗어난 방향 [°] (3-D). void 가 하나면 결과에 영향이 없으니 0° 로 두세요 (반원 대칭 격자로 2배 빠름). 여러 void 의 상대 배치에만 의미가 있습니다"),
             },
         )
-        complete = [i for i, row in edited.iterrows()
-                    if not any(row[c] is None or (isinstance(row[c], float) and math.isnan(row[c])) for c in VOID_COLUMNS)]
-        if complete:
-            st.session_state.voids_df = edited
-        else:
-            # the last void cannot be removed: keep the previous table and rebuild the editor from it (a new widget key
-            # discards the edit state that holds the deletion)
-            st.session_state.void_table_rev += 1
-            st.session_state.void_restored = True                  # the warning is shown after the rerun
-            st.rerun()
-        if st.session_state.pop("void_restored", False):
-            st.warning("마지막 void 는 삭제할 수 없습니다. void 는 하나 이상 있어야 합니다 — 이전 표를 되돌렸습니다.")
+        st.session_state.voids_df = edited
         st.selectbox("void 충전 k (모든 void 공통)", list(range(len(KVOID_PRESETS))), format_func=lambda i: KVOID_PRESETS[i].label, key="kvoid_idx")
         st.caption("행을 추가하면 여러 void 를 함께 넣습니다 (겹치면 합쳐짐). 모든 void 가 축 위(이탈 거리 0)이면 2-D 축대칭, 하나라도 축 밖이면 3-D 로 풉니다: "
                    "느리고(수 분~수십 분) Lock-in 값은 스텝 응답의 FFT 로만 얻습니다 (1/관측창 미만 주파수는 없음).")
         if not build_voids():
-            st.error("void 를 하나 이상 입력하세요 (표의 모든 칸을 채운 행이 있어야 합니다). 기준(void 없는) via 는 항상 함께 계산됩니다.")
+            st.caption("void 행이 없습니다: void 없는 via 만 계산합니다 (행을 추가하면 void via 를 함께 계산).")
         for w in void_warnings(build_voids()):
             st.warning(w)
     with st.container(border=True):
@@ -343,7 +330,7 @@ if run_clicked:
 res = st.session_state.result
 st.title("CW 투과 모드 결과")
 if res is None:
-    st.info("왼쪽에서 조건을 정하고 **적용** 을 누르세요. void 없는 기준 via 와 void via 의 스텝 응답과 주파수 응답을 함께 계산합니다.")
+    st.info("왼쪽에서 조건을 정하고 **적용** 을 누르세요. void 없는 via 의 스텝 응답과 주파수 응답을 계산하고, void 행이 있으면 void via 도 함께 계산합니다.")
     st.markdown("""
 **측정 구성** — CW 펌프가 비아 바닥면(z = 0)을 가열하고, 프로브는 윗면(z = L, 투과) / 바닥면(반사) / 양면의 온도 상승을 읽습니다.
 시스템이 선형(LTI)이므로 스텝 응답 하나에서 임펄스 응답·임의 chopping·Lock-in 진폭/위상이 모두 나오며, Lock-in 값은 주파수 영역 직접 풀이로 정확히 구해 교차 검증합니다.
@@ -490,50 +477,7 @@ if view == "신호":
             st.caption("원 곡선에서는 void 곡선(점선)이 기준 곡선 위에 겹쳐 보이지 않을 수 있습니다: 로드 중앙의 25 % void 는 반대면 신호를 0.2 % 만 바꿉니다. "
                        "이 차트가 void 신호입니다. 주파수마다의 위상·진폭 변화는 Lock-in 탭에 있습니다.")
 elif view == "Lock-in":
-    st.subheader("Lock-in (주파수 영역): Lock-in이 읽는 값")
-    # ---- frequency domain: what the lock-in reads (absolute amplitude / phase per frequency, both data routes)
-    chop = st.radio("변조 (Lock-in 진폭의 기본파 계수)", ["square", "sine"], horizontal=True, format_func=lambda x: "사각 chopping (기본파 2P/π)" if x == "square" else "정현 변조 (P/2)")
-    c1, c2 = st.columns(2)
-    fa, fp = go.Figure(), go.Figure()
-    for name, run in runs.items():
-        ds = run["ds"]
-        dash = "solid" if name == "baseline" else "dash"
-        for face in faces:
-            Hd = face_H(run, face, "direct")
-            if Hd is not None:
-                lk = an.lockin(Hd, ds.P_abs, chop)
-                fa.add_trace(go.Scatter(x=ds.freqs, y=lk["amplitude"] * 1e3, name=f"{FACE_LABEL[face].split()[0]} 직접 풀이 ({name})", line=dict(color=case_color(face, name), dash=dash)))
-                fp.add_trace(go.Scatter(x=ds.freqs, y=np.degrees(np.unwrap(np.angle(lk["complex"]))), name=f"{FACE_LABEL[face].split()[0]} 직접 풀이 ({name})",
-                                        line=dict(color=case_color(face, name), dash=dash)))
-            lk = an.lockin(face_H(run, face, "step"), ds.P_abs, chop)
-            fa.add_trace(go.Scatter(x=ds.freqs, y=lk["amplitude"] * 1e3, name=f"{FACE_LABEL[face].split()[0]} 스텝 FFT ({name})", mode="markers",
-                                    marker=dict(color=case_color(face, name), symbol="x" if name == "baseline" else "circle-open")))
-            fp.add_trace(go.Scatter(x=ds.freqs, y=np.degrees(np.unwrap(np.angle(lk["complex"]))), name=f"{FACE_LABEL[face].split()[0]} 스텝 FFT ({name})", mode="markers",
-                                    marker=dict(color=case_color(face, name), symbol="x" if name == "baseline" else "circle-open")))
-    fa.add_vline(x=base["ds"].f_switch, line=dict(color="gray", dash="dot"), annotation_text="1/창: 아래는 직접 풀이 사용")
-    fp.add_vline(x=base["ds"].f_switch, line=dict(color="gray", dash="dot"))
-    fa.update_layout(title="Lock-in 진폭 (기본파)", xaxis_title="f [Hz]", yaxis_title="진폭 [mK]", xaxis_type="log", yaxis_type="log", height=440, legend=LEGEND_BELOW, margin=MARGIN_BELOW)
-    fp.update_layout(title="Lock-in 위상 (지연 음수, unwrap)", xaxis_title="f [Hz]", yaxis_title="위상 [°]", xaxis_type="log", height=440, legend=LEGEND_BELOW, margin=MARGIN_BELOW)
-    c1.plotly_chart(fa, use_container_width=True)
-    c2.plotly_chart(fp, use_container_width=True)
-    tbl = []
-    for i, f in enumerate(base["ds"].freqs):
-        row = {"f [Hz]": f, "사용 경로": base["ds"].source[i] + ("" if not has_void or runs["void"]["fr"] is not None else " / void: step_fft")}
-        for face in faces:
-            for name, run in runs.items():
-                lk = an.lockin(face_H(run, face, "ds"), run["ds"].P_abs, chop)
-                row[f"{FACE_LABEL[face].split()[0]} 진폭 [μK] ({name})"] = lk["amplitude"][i] * 1e6
-                row[f"{FACE_LABEL[face].split()[0]} 위상 [°] ({name})"] = lk["phase_deg"][i]
-            if has_void:
-                lb = an.lockin(face_H(base, face, "ds"), base["ds"].P_abs, chop)
-                lv = an.lockin(face_H(runs["void"], face, "ds"), runs["void"]["ds"].P_abs, chop)
-                row[f"{FACE_LABEL[face].split()[0]} 진폭 변화 [%]"] = (lv["amplitude"][i] / lb["amplitude"][i] - 1) * 100
-                row[f"{FACE_LABEL[face].split()[0]} 위상 변화 [°]"] = lv["phase_deg"][i] - lb["phase_deg"][i]
-        tbl.append(row)
-    st.dataframe(pd.DataFrame(tbl).style.format({c: "{:.4g}" for c in tbl[0] if c != "사용 경로"}), use_container_width=True, hide_index=True)
-    st.caption(f"'사용 경로': 관측창 {rb.t[-1] * ts:.3g} ms 가 분해하지 못하는 f < {base['ds'].f_switch:.3g} Hz 는 주파수 영역 직접 풀이, 그 위는 스텝 과도응답의 FFT. "
-               "두 경로의 차이가 시간 적분기의 검증 항목입니다 (검증 탭). 축 밖 void 의 void via 는 스텝 FFT 만 있으므로 1/창 미만 값은 신뢰하지 마세요.")
-
+    chop = "square"          # the pump is chopped on/off: the Lock-in reads the fundamental, amplitude 2P/pi (no selector)
     if has_void:
         st.subheader("Lock-in이 보는 void 신호 (void − 기준)")
         # lock-in view of the same void: phase and amplitude change per frequency (what a lock-in measurement sees)
@@ -558,8 +502,55 @@ elif view == "Lock-in":
         i_far = int(np.argmax(np.abs(np.degrees(np.angle(dsv.H_far / dsb.H_far)))))
         st.caption(f"Lock-in이 보는 void 신호: 주파수마다 위상·진폭이 얼마나 바뀌는지. 반대면 위상 변화 최대 "
                    f"{np.degrees(np.angle(dsv.H_far[i_far] / dsb.H_far[i_far])):+.2f}° @ {dsb.freqs[i_far]:g} Hz. "
-                   "검출 조건: 위상 변화가 Lock-in 위상 잡음(그 주파수·진폭에서)의 ~3배 이상. 위상은 반사율·c_tr 과 무관하지만 진폭 변화는 그렇지 않습니다. "
+                   "검출 조건: 위상 변화가 Lock-in 위상 잡음(그 주파수·진폭에서)의 ~3배 이상 — 그 주파수의 절대 진폭(아래 'Lock-in이 읽는 값')이 잡음 바닥보다 커야 의미가 있습니다. 위상은 반사율·c_tr 과 무관하지만 진폭 변화는 그렇지 않습니다. "
                    "데이터 경로는 위 표의 '사용 경로' 와 같습니다 (1/관측창 미만: 직접 풀이, 이상: 스텝 FFT).")
+
+    if not has_void:
+        st.info("void 행이 없어 void 신호가 없습니다. 아래는 void 없는 via 의 Lock-in 값입니다.")
+    with st.expander("Lock-in이 읽는 값 (주파수 영역, 절대 진폭·위상) — 측정 가능 범위 확인용", expanded=False):
+        # ---- frequency domain: what the lock-in reads (absolute amplitude / phase per frequency, both data routes)
+        st.caption("진폭은 사각 chopping 의 기본파 (2P/π) 기준입니다. 위상·위상 변화·k_eff 는 변조 방식과 무관합니다.")
+        c1, c2 = st.columns(2)
+        fa, fp = go.Figure(), go.Figure()
+        for name, run in runs.items():
+            ds = run["ds"]
+            dash = "solid" if name == "baseline" else "dash"
+            for face in faces:
+                Hd = face_H(run, face, "direct")
+                if Hd is not None:
+                    lk = an.lockin(Hd, ds.P_abs, chop)
+                    fa.add_trace(go.Scatter(x=ds.freqs, y=lk["amplitude"] * 1e3, name=f"{FACE_LABEL[face].split()[0]} 직접 풀이 ({name})", line=dict(color=case_color(face, name), dash=dash)))
+                    fp.add_trace(go.Scatter(x=ds.freqs, y=np.degrees(np.unwrap(np.angle(lk["complex"]))), name=f"{FACE_LABEL[face].split()[0]} 직접 풀이 ({name})",
+                                            line=dict(color=case_color(face, name), dash=dash)))
+                lk = an.lockin(face_H(run, face, "step"), ds.P_abs, chop)
+                fa.add_trace(go.Scatter(x=ds.freqs, y=lk["amplitude"] * 1e3, name=f"{FACE_LABEL[face].split()[0]} 스텝 FFT ({name})", mode="markers",
+                                        marker=dict(color=case_color(face, name), symbol="x" if name == "baseline" else "circle-open")))
+                fp.add_trace(go.Scatter(x=ds.freqs, y=np.degrees(np.unwrap(np.angle(lk["complex"]))), name=f"{FACE_LABEL[face].split()[0]} 스텝 FFT ({name})", mode="markers",
+                                        marker=dict(color=case_color(face, name), symbol="x" if name == "baseline" else "circle-open")))
+        # the axes are logarithmic: Plotly shapes take log10 of the data value there
+        fa.add_vline(x=math.log10(base["ds"].f_switch), line=dict(color="gray", dash="dot"), annotation_text="1/창: 아래는 직접 풀이 사용")
+        fp.add_vline(x=math.log10(base["ds"].f_switch), line=dict(color="gray", dash="dot"))
+        fa.update_layout(title="Lock-in 진폭 (기본파)", xaxis_title="f [Hz]", yaxis_title="진폭 [mK]", xaxis_type="log", yaxis_type="log", height=440, legend=LEGEND_BELOW, margin=MARGIN_BELOW)
+        fp.update_layout(title="Lock-in 위상 (지연 음수, unwrap)", xaxis_title="f [Hz]", yaxis_title="위상 [°]", xaxis_type="log", height=440, legend=LEGEND_BELOW, margin=MARGIN_BELOW)
+        c1.plotly_chart(fa, use_container_width=True)
+        c2.plotly_chart(fp, use_container_width=True)
+        tbl = []
+        for i, f in enumerate(base["ds"].freqs):
+            row = {"f [Hz]": f, "사용 경로": base["ds"].source[i] + ("" if not has_void or runs["void"]["fr"] is not None else " / void: step_fft")}
+            for face in faces:
+                for name, run in runs.items():
+                    lk = an.lockin(face_H(run, face, "ds"), run["ds"].P_abs, chop)
+                    row[f"{FACE_LABEL[face].split()[0]} 진폭 [μK] ({name})"] = lk["amplitude"][i] * 1e6
+                    row[f"{FACE_LABEL[face].split()[0]} 위상 [°] ({name})"] = lk["phase_deg"][i]
+                if has_void:
+                    lb = an.lockin(face_H(base, face, "ds"), base["ds"].P_abs, chop)
+                    lv = an.lockin(face_H(runs["void"], face, "ds"), runs["void"]["ds"].P_abs, chop)
+                    row[f"{FACE_LABEL[face].split()[0]} 진폭 변화 [%]"] = (lv["amplitude"][i] / lb["amplitude"][i] - 1) * 100
+                    row[f"{FACE_LABEL[face].split()[0]} 위상 변화 [°]"] = lv["phase_deg"][i] - lb["phase_deg"][i]
+            tbl.append(row)
+        st.dataframe(pd.DataFrame(tbl).style.format({c: "{:.4g}" for c in tbl[0] if c != "사용 경로"}), use_container_width=True, hide_index=True)
+        st.caption(f"'사용 경로': 관측창 {rb.t[-1] * ts:.3g} ms 가 분해하지 못하는 f < {base['ds'].f_switch:.3g} Hz 는 주파수 영역 직접 풀이, 그 위는 스텝 과도응답의 FFT. "
+                   "두 경로의 차이가 시간 적분기의 검증 항목입니다 (검증 탭). 축 밖 void 의 void via 는 스텝 FFT 만 있으므로 1/창 미만 값은 신뢰하지 마세요.")
 
 elif view == "분석":
     if "far" in faces:
@@ -640,14 +631,14 @@ elif view == "분석":
             fig.update_layout(xaxis_title="t [ms]", yaxis_title="ΔT [K]", title="스텝 절편: 반대면 곡선과 최대 기울기 접선")
         elif method == "parker":
             fig.add_trace(go.Scatter(x=r.t * ts, y=a_["h"], name=f"임펄스 응답 dΔT_far/dt ({name})", line=dict(color=case_color("far", name), dash=dash)))
-            fig.add_vline(x=a_["t_half"] * ts, line=dict(color=case_color("far", name), dash=dash), annotation_text=f"t½ = {a_['t_half'] * ts:.3g} ms ({name})")
+            fig.add_vline(x=math.log10(a_["t_half"] * ts), line=dict(color=case_color("far", name), dash=dash), annotation_text=f"t½ = {a_['t_half'] * ts:.3g} ms ({name})")
             fig.update_layout(xaxis_title="t [ms]", yaxis_title="h [K/s]", title="Parker: 임펄스 응답과 반상승 시각", xaxis_type="log")
         else:
             fig.add_trace(go.Scatter(x=r.t * ts, y=a_["R_th_curve"], name=f"R_th(t) ({name})", line=dict(color="#17becf" if name == "baseline" else "#e377c2", dash=dash)))
             fig.add_hline(y=a_["R_through"], line=dict(color="gray", dash="dot"), annotation_text="통과 흐름 P·L/(kA) (열이 반대면으로 빠질 때)")
             fig.add_hline(y=a_["R_quasi_steady"] + a_.get("R_spread", 0.0), line=dict(color="gray", dash="dash"),
                           annotation_text="단열 준정상 P·L/(2kA) + 스프레딩 1/(4ka)")
-            fig.add_vline(x=t_star * ts, line=dict(color="#2ca02c", dash="dot"), annotation_text="t*")
+            fig.add_vline(x=math.log10(max(t_star * ts, 1e-6)), line=dict(color="#2ca02c", dash="dot"), annotation_text="t*")
             fig.update_layout(xaxis_title="t [ms]", yaxis_title="R_th [K/W]", title="양면 온도차 R_th(t) = (ΔT_pump − ΔT_far)/P_abs", xaxis_type="log")
     fig.update_layout(height=420, legend=LEGEND_BELOW, margin=MARGIN_BELOW)
     st.plotly_chart(fig, use_container_width=True)
