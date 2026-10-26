@@ -555,20 +555,32 @@ elif view == "Lock-in":
 elif view == "분석":
     if "far" in faces:
         st.subheader("k_eff (위상 기반 유리 껍질 TLM 역산, 반대면)")
+        tables = {name: deliverable_table(run, res["L"], res["A"]) for name, run in runs.items()}
+        main_route = next(iter(tables["baseline"]))          # the "자동" dataset the whole GUI analyses (first route)
+        case_label = {"baseline": "void 없는 via", "void": "void via"}
+        k_main = {name: t[main_route] for name, t in tables.items()}
         rows = []
-        for name, run in runs.items():
-            for route, k in deliverable_table(run, res["L"], res["A"]).items():
-                rows.append({"케이스": name, "데이터 경로": route, "k_eff [W/mK]": k, "참값 대비 (모델 오차) [%]": (k / COPPER.k - 1) * 100})
+        for name, k in k_main.items():
+            row = {"케이스": case_label[name], "k_eff [W/mK]": k, "참값 398 대비 (모델 오차) [%]": (k / COPPER.k - 1) * 100}
+            if has_void:
+                row["Δk/k (void − void 없는 via) [%]"] = (k / k_main["baseline"] - 1) * 100 if name == "void" else np.nan
+            rows.append(row)
         df = pd.DataFrame(rows)
-        if has_void:
-            kb = df[(df["케이스"] == "baseline")].set_index("데이터 경로")["k_eff [W/mK]"]
-            df["Δk/k (void − 기준) [%]"] = [((r["k_eff [W/mK]"] / kb[r["데이터 경로"]] - 1) * 100) if (r["케이스"] == "void" and r["데이터 경로"] in kb.index) else np.nan
-                                          for _, r in df.iterrows()]
-        st.dataframe(df.style.format({c: "{:.1f}" for c in df.columns if c not in ("케이스", "데이터 경로")}), use_container_width=True, hide_index=True)
+        st.dataframe(df.style.format({c: "{:.1f}" for c in df.columns if c != "케이스"}), use_container_width=True, hide_index=True)
         ds = base["ds"]
-        st.caption(f"위상만 사용 → 반사율·c_tr 무관. 주파수 {ds.freqs.min():g}–{ds.freqs.max():g} Hz ({len(ds.freqs)} 점), 자동 경로 전환 {ds.f_switch:.3g} Hz (= 1/관측창). "
+        st.caption(f"위상만 사용 → 반사율·c_tr 무관. 주파수 {ds.freqs.min():g}–{ds.freqs.max():g} Hz ({len(ds.freqs)} 점). "
                    f"'참값 대비' 는 Cu 398 W/mK 와의 차이 = 유리 껍질 모델(실린더 주위 무한 유리) 의 모델 오차; 위상 잡음 요구 사양은 results/cw_phase_noise 참조. "
-                   "기준 대비 Δk/k 가 void 의 직렬 저항입니다 (깊이·위치와 무관하게 막힌 단면에 비례).")
+                   "Δk/k 가 void 의 직렬 저항입니다 (깊이·위치와 무관하게 막힌 단면에 비례).")
+        with st.expander("데이터 경로 교차검증: 직접 풀이 vs 스텝 FFT (같은 역산)", expanded=False):
+            xrows = []
+            for name, t in tables.items():
+                for route, k in t.items():
+                    xrows.append({"케이스": case_label[name], "데이터 경로": route, "k_eff [W/mK]": k, "참값 398 대비 [%]": (k / COPPER.k - 1) * 100})
+            st.dataframe(pd.DataFrame(xrows).style.format({c: "{:.1f}" for c in xrows[0] if c not in ("케이스", "데이터 경로")}),
+                         use_container_width=True, hide_index=True)
+            ks = list(tables["baseline"].values())
+            st.caption(f"자동 경로는 f < {ds.f_switch:.3g} Hz (= 1/관측창) 에서 주파수 영역 직접 풀이, 그 위에서 스텝 과도응답의 FFT 를 씁니다. "
+                       f"경로 간 k_eff 차이 {(max(ks) / min(ks) - 1) * 100:.2f} % (요구 ±2 %): 시간 적분기와 주파수 풀이의 일치 검증이며 via 의 정보는 아닙니다.")
     else:
         st.subheader("k_eff: 사용 불가")
         st.warning("절대 k_eff 는 **반대면** Lock-in 위상의 역산입니다. 펌프면 프로브만으로는 스팟 스프레딩·정렬 오차가 지배하는 신호라 k_eff 를 내지 않습니다 "
