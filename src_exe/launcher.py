@@ -8,7 +8,9 @@ The same executable runs in two roles:
 * Server process (``--serve PORT PARENT_PID``): runs Streamlit's server on its main thread (Streamlit
   installs signal handlers, which only works there) and exits by itself if the GUI process disappears.
 
-The app itself (``src/app.py`` + ``src/ttr_sim``) is bundled unchanged.
+Two apps are bundled unchanged: the reflection-mode GUI (``src/app.py``) and the CW transmission-mode GUI
+(``src/app_cw.py``).  The frozen build ships one executable per app; which app runs is decided by the
+executable's name ("CW" in the name -> app_cw.py).  From source, pass ``--cw`` for the CW app.
 """
 
 from __future__ import annotations
@@ -22,13 +24,15 @@ import time
 import urllib.request
 from pathlib import Path
 
-APP_NAME = "ns-TTR Simulator"
 FROZEN = getattr(sys, "frozen", False)
+CW = ("cw" in Path(sys.executable).stem.lower()) if FROZEN else ("--cw" in sys.argv)
+APP_NAME = "ns-TTR CW Simulator" if CW else "ns-TTR Simulator"
+APP_FILE = "app_cw.py" if CW else "app.py"
 
 if FROZEN:
-    APP_SCRIPT = Path(sys._MEIPASS) / "app" / "app.py"
+    APP_SCRIPT = Path(sys._MEIPASS) / "app" / APP_FILE
 else:  # running from source: use the app in ../src directly
-    APP_SCRIPT = Path(__file__).resolve().parent.parent / "src" / "app.py"
+    APP_SCRIPT = Path(__file__).resolve().parent.parent / "src" / APP_FILE
 
 LOG_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / APP_NAME / "logs"
 
@@ -94,7 +98,7 @@ def _free_port() -> int:
 
 
 def _server_command(port: int) -> list[str]:
-    args = ["--serve", str(port), str(os.getpid())]
+    args = ["--serve", str(port), str(os.getpid())] + (["--cw"] if CW else [])
     if FROZEN:
         return [sys.executable, *args]
     return [sys.executable, str(Path(__file__).resolve()), *args]
