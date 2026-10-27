@@ -280,6 +280,13 @@ def _submatrix(A: sp.csc_matrix, keep) -> sp.csc_matrix:
     return sp.csc_matrix((Ac.data[m], (Ac.row[m], Ac.col[m])), shape=A.shape)
 
 
+def _drop_roundoff(Ac: sp.coo_matrix, rel: float = 1e-12) -> sp.csc_matrix:
+    """`Ac` without the off-diagonal entries smaller than `rel` * sqrt(|a_ii a_jj|) (round-off of exact zeros)."""
+    d = np.abs(Ac.diagonal())
+    keep = (Ac.row == Ac.col) | (np.abs(Ac.data) >= rel * np.sqrt(d[Ac.row] * d[Ac.col]))
+    return sp.csc_matrix((Ac.data[keep], (Ac.row[keep], Ac.col[keep])), shape=Ac.shape)
+
+
 class _StructuredPC:
     """Two-level SPD preconditioner for A = C/dt + theta L on the (z, r, theta) cell ordering p = ji * nth + m.
 
@@ -294,7 +301,12 @@ class _StructuredPC:
     cannot represent its inverse (BiCGSTAB broke down, residuals stalled at 1e-3..1e-8).  The sector and
     ring solves are exact in the two strongly coupled directions and the Fourier coarse space carries the
     long-range, smooth-in-theta error that remains; CG then converges in 10-25 iterations independently of
-    the cell/diffusion-length ratio.  Setup is a few seconds for 10^6 unknowns."""
+    the cell/diffusion-length ratio.  Setup is a few seconds for 10^6 unknowns.
+
+    On a uniform theta grid (a void containing the axis) the Fourier modes are discretely orthogonal, so
+    most mode-to-mode entries of P^T A P are round-off (~1e-17 of the diagonal) rather than zero; carried
+    as non-zeros they make SuperLU factorise a dense, numerically empty coupling (minutes instead of a
+    second).  Entries below 1e-12 of sqrt(a_ii a_jj) are dropped before the factorisation."""
 
     def __init__(self, A: sp.csc_matrix, nth: int, th_faces: np.ndarray, periodic: bool, n_modes: int = 9):
         self.A = A
@@ -316,7 +328,7 @@ class _StructuredPC:
             k += 1
         Phi = sp.csr_matrix(np.array(cols).T)
         self.P = sp.kron(sp.identity(nc, format="csr"), Phi, format="csr")
-        self.lu_coarse = spla.splu((self.P.T @ A @ self.P).tocsc(), permc_spec="MMD_AT_PLUS_A")
+        self.lu_coarse = spla.splu(_drop_roundoff((self.P.T @ A @ self.P).tocoo()), permc_spec="MMD_AT_PLUS_A")
         self.op = spla.LinearOperator(A.shape, self.apply)
 
     def _smooth(self, r: np.ndarray) -> np.ndarray:
