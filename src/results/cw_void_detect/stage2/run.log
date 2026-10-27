@@ -1,0 +1,48 @@
+2026-10-27 11:19:17 start: 1 cached runs, thresholds {'k': 0.8947204546081511, 'p': 20.1}, workers 2
+2026-10-27 11:19:17 submit S2_sphere_r20_z250_d32.8  (z_c 250.0, Cu 1.00)
+2026-10-27 11:19:17 submit S2_sphere_r20_z100_d36.2  (z_c 100.0, Cu 1.00)
+2026-10-27 11:23:12 done S2_sphere_r20_z100_d36.2: Δk/k -1.109 %  pump ΔT +13.66 mK  far ΔT -1.21 mK  3.9 min
+2026-10-27 11:23:13 submit S2_sphere_r20_z100_d33.2  (z_c 100.0, Cu 1.00)
+2026-10-27 11:23:31 done S2_sphere_r20_z250_d32.8: Δk/k -0.792 %  pump ΔT +4.31 mK  far ΔT -1.89 mK  4.2 min
+2026-10-27 11:23:32 submit S2_sphere_r20_z250_d34.0  (z_c 250.0, Cu 1.00)
+2026-10-27 11:26:59 done S2_sphere_r20_z100_d33.2: Δk/k -0.846 %  pump ΔT +10.45 mK  far ΔT -0.89 mK  3.8 min
+2026-10-27 11:26:59 submit S2_sphere_r20_z100_d33.8  (z_c 100.0, Cu 1.00)
+2026-10-27 11:28:23 done S2_sphere_r20_z250_d34.0: Δk/k -0.897 %  pump ΔT +4.91 mK  far ΔT -2.16 mK  4.8 min
+2026-10-27 11:28:23 submit S2_sphere_r20_z250_d33.0  (z_c 250.0, Cu 1.00)
+2026-10-27 11:30:50 done S2_sphere_r20_z100_d33.8: Δk/k -0.889 %  pump ΔT +11.14 mK  far ΔT -0.94 mK  3.8 min
+2026-10-27 11:30:50 submit S2_sphere_r20_z100_d34.8  (z_c 100.0, Cu 1.00)
+2026-10-27 11:32:34 done S2_sphere_r20_z250_d33.0: Δk/k -0.811 %  pump ΔT +4.40 mK  far ΔT -1.93 mK  4.2 min
+2026-10-27 11:32:34 submit S2_sphere_r20_z250_d52.3  (z_c 250.0, Cu 0.94)
+2026-10-27 11:34:24 done S2_sphere_r20_z100_d34.8: Δk/k -0.988 %  pump ΔT +12.22 mK  far ΔT -1.06 mK  3.6 min
+2026-10-27 11:34:24 submit S2_sphere_r20_z100_d42.0  (z_c 100.0, Cu 1.00)
+2026-10-27 12:48:45 done S2_sphere_r20_z100_d42.0: Δk/k -1.975 %  pump ΔT +23.58 mK  far ΔT -2.16 mK  74.3 min
+2026-10-27 12:48:45 submit S2_sphere_r20_z100_d39.1  (z_c 100.0, Cu 1.00)
+2026-10-27 12:53:57 done S2_sphere_r20_z100_d39.1: Δk/k -1.527 %  pump ΔT +18.28 mK  far ΔT -1.73 mK  5.2 min
+2026-10-27 12:53:57 submit S2_sphere_r20_z100_d40.5  (z_c 100.0, Cu 1.00)
+2026-10-27 13:41:29 done S2_sphere_r20_z250_d52.3: Δk/k -3.609 %  pump ΔT +20.77 mK  far ΔT -8.52 mK  128.9 min
+2026-10-27 13:41:29 submit S2_sphere_r20_z250_d48.4  (z_c 250.0, Cu 0.97)
+2026-10-27 14:17:07 done S2_sphere_r20_z100_d40.5: Δk/k -1.742 %  pump ΔT +20.76 mK  far ΔT -1.90 mK  83.1 min
+2026-10-27 14:17:07 submit S2_sphere_r20_z100_d39.8  (z_c 100.0, Cu 1.00)
+2026-10-27 14:23:40 done S2_sphere_r20_z100_d39.8: Δk/k -1.655 %  pump ΔT +19.58 mK  far ΔT -1.87 mK  6.5 min
+2026-10-27 14:23:40 submit S2_sphere_r10_z250_d34.0  (z_c 250.0, Cu 1.00)
+2026-10-27 15:06:14 start: 13 cached runs, thresholds {'k': 0.8947204546081511, 'p': 20.1}, workers 2
+2026-10-27 15:06:15 submit S2_sphere_r20_z250_d48.4  (z_c 250.0, Cu 0.97)
+2026-10-27 15:06:15 submit S2_sphere_r10_z250_d34.0  (z_c 250.0, Cu 1.00)
+2026-10-27 15:08:59 done S2_sphere_r10_z250_d34.0: Δk/k -0.786 %  pump ΔT +4.65 mK  far ΔT -1.92 mK  2.7 min
+2026-10-27 15:08:59 submit S2_sphere_r10_z250_d36.1  (z_c 250.0, Cu 1.00)
+2026-10-27 15:09:39 done S2_sphere_r20_z250_d48.4: Δk/k -2.939 %  pump ΔT +16.30 mK  far ΔT -6.83 mK  3.4 min
+2026-10-27 15:09:39 submit S2_sphere_r20_z250_d50.3  (z_c 250.0, Cu 0.96)
+2026-10-27 15:11:36 done S2_sphere_r10_z250_d36.1: Δk/k -0.940 %  pump ΔT +5.57 mK  far ΔT -2.33 mK  2.6 min
+2026-10-27 15:11:37 submit S2_sphere_r10_z250_d35.1  (z_c 250.0, Cu 1.00)
+2026-10-27 15:12:55 done S2_sphere_r20_z250_d50.3: Δk/k -3.225 %  pump ΔT +18.39 mK  far ΔT -7.44 mK  3.2 min
+2026-10-27 15:12:55 submit S2_sphere_r20_z250_d51.3  (z_c 250.0, Cu 0.95)
+2026-10-27 15:14:13 done S2_sphere_r10_z250_d35.1: Δk/k -0.869 %  pump ΔT +5.14 mK  far ΔT -2.14 mK  2.6 min
+2026-10-27 15:14:13 submit S2_sphere_r10_z250_d57.1  (z_c 250.0, Cu 1.00)
+2026-10-27 15:16:21 done S2_sphere_r20_z250_d51.3: Δk/k -3.423 %  pump ΔT +19.58 mK  far ΔT -7.94 mK  3.4 min
+2026-10-27 15:16:21 submit S2_sphere_r30_z250_d34.0  (z_c 250.0, Cu 0.87)
+2026-10-27 15:17:12 done S2_sphere_r10_z250_d57.1: Δk/k -4.730 %  pump ΔT +26.81 mK  far ΔT -14.18 mK  3.0 min
+2026-10-27 15:17:12 submit S2_sphere_r10_z250_d52.5  (z_c 250.0, Cu 1.00)
+2026-10-27 15:20:18 done S2_sphere_r10_z250_d52.5: Δk/k -3.320 %  pump ΔT +19.26 mK  far ΔT -9.40 mK  3.1 min
+2026-10-27 15:20:18 submit S2_sphere_r10_z250_d54.8  (z_c 250.0, Cu 1.00)
+2026-10-27 15:22:07 done S2_sphere_r30_z250_d34.0: Δk/k -0.809 %  pump ΔT +4.99 mK  far ΔT -1.23 mK  5.8 min
+2026-10-27 15:22:07 submit S2_sphere_r30_z250_d35.8  (z_c 250.0, Cu 0.85)
